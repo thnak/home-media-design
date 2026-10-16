@@ -1,0 +1,50 @@
+# Kiem tra ranh gioi bao mat trong dependency graph (muc 11 cua thiet ke).
+# hm_forbid_dependency(<target> <forbidden>) lam CMake dung lai neu <target>
+# link truc tiep hoac bac cau toi <forbidden>.
+
+function(_hm_collect_deps target out_var)
+    set(visited "${${out_var}}")
+    if(NOT TARGET ${target})
+        return()
+    endif()
+    get_target_property(aliased ${target} ALIASED_TARGET)
+    if(aliased)
+        set(target ${aliased})
+    endif()
+    if(target IN_LIST visited)
+        return()
+    endif()
+    list(APPEND visited ${target})
+
+    get_target_property(type ${target} TYPE)
+    set(libs "")
+    if(NOT type STREQUAL "INTERFACE_LIBRARY")
+        get_target_property(direct ${target} LINK_LIBRARIES)
+        if(direct)
+            list(APPEND libs ${direct})
+        endif()
+    endif()
+    get_target_property(iface ${target} INTERFACE_LINK_LIBRARIES)
+    if(iface)
+        list(APPEND libs ${iface})
+    endif()
+
+    foreach(lib IN LISTS libs)
+        string(REGEX REPLACE "^\\$<LINK_ONLY:(.*)>$" "\\1" lib "${lib}")
+        if(TARGET ${lib})
+            _hm_collect_deps(${lib} visited)
+        endif()
+    endforeach()
+    set(${out_var} "${visited}" PARENT_SCOPE)
+endfunction()
+
+function(hm_forbid_dependency target forbidden)
+    set(deps "")
+    _hm_collect_deps(${target} deps)
+    if(forbidden IN_LIST deps)
+        message(FATAL_ERROR
+            "Vi pham ranh gioi bao mat: '${target}' phu thuoc vao '${forbidden}'. "
+            "Tien trinh tiep xuc mang khong duoc link module giu khoa (thiet ke muc 11).")
+    endif()
+    message(STATUS "Boundary check OK: ${target} khong phu thuoc ${forbidden}")
+endfunction()

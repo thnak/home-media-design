@@ -1,0 +1,10 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "home-media",
+  "version-string": "0.0.1",
+  "description": "Home media server ma hoa: thu vien gia dinh, transcode GPU, Watch Party",
+  "license": "MIT",
+  "dependencies": [
+    "libsodium"
+  ]
+}

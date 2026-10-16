@@ -1,0 +1,2 @@
+add_executable(bench_crypto_chunk crypto_chunk/bench_crypto_chunk.cpp)
+target_link_libraries(bench_crypto_chunk PRIVATE hm::crypto_core hm_compiler_options)

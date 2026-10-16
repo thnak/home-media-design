@@ -1,0 +1,16 @@
+# Build
+/build/
+/out/
+/vcpkg_installed/
+CMakeUserPresets.json
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+
+# Benchmark: phim mẫu và kết quả thô không đưa vào repo
+/bench/samples/
+/bench/results/*
+!/bench/results/README.md
