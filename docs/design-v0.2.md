@@ -41,7 +41,7 @@ Trạng thái: bản nháp thảo luận; mã nguồn ở giai đoạn benchmark
 | Server | Windows và Linux |
 | Client | Windows native trước, Android sau (C++ core qua JNI) |
 | CPU server | AVX2 trở lên (transcode phần mềm dự phòng, mã hóa) |
-| GPU server | NVIDIA: NVDEC/NVENC cho transcode, CUDA cho tone-map |
+| GPU server | NVIDIA: NVDEC/NVENC cho transcode, CUDA và Vulkan cho tone-map; hãng khác qua HAL (mục 11.2, 11.3) |
 | Media engine | FFmpeg |
 | Rendering client | Vulkan |
 | Mã hóa | Mọi dữ liệu trên đĩa và bản sao lưu là ciphertext; kênh Noise xác thực hai chiều trên đường truyền (mục 9); khóa nội dung cấp theo từng thiết bị |
@@ -55,7 +55,42 @@ CPU AVX2 và GPU NVIDIA là điều kiện triển khai, không phải cơ chế
 
 Server gồm hai phần tách tiến trình: dịch vụ API không giữ khóa, và media worker giữ khóa trong RAM để import, transcode và đọc metadata. Đĩa và bản sao lưu chỉ chứa ciphertext.
 
-&#91;embedded content: kiến trúc tổng thể · 2 loại client, 6 dịch vụ server, 1 kho ciphertext\]
+```mermaid
+flowchart LR
+    subgraph devices["Thiết bị đã ghép (native app)"]
+        admin["Client admin<br/>import, metadata, duyệt thiết bị"]
+        viewer["Client xem<br/>giải mã, phát, Watch Party"]
+    end
+
+    relay["media_relay trên VPS<br/>tùy chọn, khi CGNAT"]
+
+    subgraph server["Server gia đình"]
+        subgraph net["Tiếp xúc mạng · không giữ khóa"]
+            api["media_api<br/>kênh Noise, RPC, ACL"]
+            rooms["rooms<br/>thành viên, tier, relay sự kiện"]
+            sfu["SFU voice<br/>tier 2 trở lên"]
+            storage["storage<br/>đọc/ghi ciphertext, resume"]
+        end
+        subgraph keyside["Giữ khóa · không mở cổng ra ngoài"]
+            worker["media_worker<br/>import, transcode GPU, planner"]
+            keystore["key store<br/>KEK, Argon2id, TPM"]
+        end
+        disk[("Kho ciphertext<br/>đĩa và bản sao lưu")]
+    end
+
+    admin -->|"Noise: chunk đã mã hóa, metadata"| api
+    viewer -->|"Noise: ciphertext, envelope, sự kiện phòng"| api
+    viewer <-->|"voice, SFrame trên DTLS-SRTP"| sfu
+    admin -.->|"khi CGNAT"| relay
+    viewer -.->|"khi CGNAT"| relay
+    relay -.->|"kết nối mở từ server ra"| api
+    api --> rooms
+    api --> storage
+    storage --> disk
+    api -->|"IPC cục bộ có xác thực<br/>chỉ lệnh có cấu trúc"| worker
+    worker --> keystore
+    worker -->|"đọc/ghi ciphertext"| disk
+```
 
 Client xem nhận ciphertext cùng key envelope của chính thiết bị, rồi tự giải mã. Vì vậy dịch vụ API vẫn phục vụ phát được khi key store đang khóa; chỉ import và transcode cần mở khóa. Voice ở tier 1 đi P2P giữa các client (mục 8).
 
@@ -147,7 +182,7 @@ Passphrase admin (Argon2id) và/hoặc TPM
 
 ### 4.3. Khóa thiết bị
 
-Mỗi thiết bị có cặp khóa riêng; khóa công khai dùng để nhận envelope DEK. Thiết bị mới chỉ được đăng ký khi admin duyệt, qua QR hoặc token do admin cấp (mục 9.2). Đăng ký kèm hồ sơ năng lực ban đầu (mục 5.1).
+Mỗi thiết bị có cặp khóa riêng; khóa công khai dùng để nhận envelope DEK. Khóa riêng được bọc bằng khóa phần cứng của thiết bị (TPM, Android Keystore) qua `hal::KeyVault` (mục 11.3). Thiết bị mới chỉ được đăng ký khi admin duyệt, qua QR hoặc token do admin cấp (mục 9.2). Đăng ký kèm hồ sơ năng lực ban đầu (mục 5.1).
 
 ### 4.4. DEK và envelope
 
@@ -241,7 +276,43 @@ Khi một thiết bị có năng lực mới đăng ký, server tạo job cho c�
 
 Một đồ thị xử lý duy nhất phục vụ cả job dựng sẵn bậc rendition lẫn phiên transcode trực tiếp: nguồn được giải mã và decode một lần, rồi tách thành nhiều nhánh encode cho từng tier thiết bị, khung hình nằm trên GPU suốt quá trình.
 
-&#91;embedded content: pipeline transcode · 1 decode, 4 nhánh video, 1 nhánh audio\]
+```mermaid
+flowchart LR
+    src["EncryptedMediaSource<br/>giải mã chunk trong RAM"] --> demux["FFmpeg demux"]
+
+    subgraph gpu["Trên GPU: khung nằm trong VRAM"]
+        dec["NVDEC"]
+        norm["Chuẩn hóa<br/>khử xen kẽ, metadata màu"]
+        hdrscale["Scale 2160p"]
+        hdrenc["AV1 10-bit<br/>2160p HDR"]
+        tm["Scale 1080p + tone-map một lần<br/>libplacebo, áp RPU DV5"]
+        e1080["HEVC<br/>1080p SDR"]
+        s720["Scale 720p"]
+        e720["H.264<br/>720p SDR"]
+        s480["Scale 480p"]
+        e480["H.264<br/>480p SDR"]
+    end
+
+    subgraph audio["Audio: decode một lần"]
+        adec["Audio decode"]
+        aac["AAC stereo downmix"]
+        mch["AAC/Opus đa kênh"]
+        copy["Atmos: sao chép nguyên track"]
+    end
+
+    demux -->|video| dec --> norm
+    norm --> hdrscale --> hdrenc
+    norm --> tm --> e1080
+    tm --> s720 --> e720
+    s720 --> s480 --> e480
+    demux -->|audio| adec
+    adec --> aac
+    adec --> mch
+    demux -->|"track Atmos"| copy
+
+    hdrenc & e1080 & e720 & e480 & aac & mch & copy --> cmaf["Bộ chia segment CMAF<br/>mỗi nhánh một bộ"]
+    cmaf --> aead["AEAD bằng khóa con của variant"] --> out[("Ghi đĩa hoặc gửi đi")]
+```
 
 Nhánh SDR đi theo chuỗi: tone-map một lần rồi scale dần xuống, nên thêm một tier chỉ tốn thêm một bước scale và một phiên encode.
 
@@ -297,7 +368,7 @@ Một nhánh trực tiếp phải chạy nhanh hơn thời gian thực với bi�
 
 | Tham số | Giá trị đề xuất |
 | --- | --- |
-| Encoder | av1\_nvenc (HDR), hevc\_nvenc (SDR cao), h264\_nvenc (SDR thấp); SVT-AV1 hoặc phần mềm khi không có GPU phù hợp |
+| Encoder | av1\_nvenc (HDR), hevc\_nvenc (SDR cao), h264\_nvenc (SDR thấp); khi không có GPU phù hợp: SVT-AV1, Kvazaar, OpenH264 (mục 11.3.2) |
 | GOP | Cố định, đóng, ép IDR theo timeline segment |
 | Điều khiển bitrate | VBR có trần (maxrate, bufsize) theo từng bậc; phiên trực tiếp dùng preset nhanh hơn job dựng sẵn |
 | Tone-map | libplacebo (LGPL) qua Vulkan, chia sẻ khung với CUDA; cần benchmark so với các phương án khác |
@@ -411,7 +482,7 @@ Server → Network → Unit cache → AEAD verify + decrypt
       → FFmpeg demux → decoder (HW nếu có) → Vulkan renderer + Audio output
 ```
 
-Vulkan là API rendering/compute, không thay thế decoder. Mỗi nền tảng cần đường hardware decode riêng (D3D11VA/NVDEC trên Windows, MediaCodec trên Android).
+Vulkan là API rendering/compute, không thay thế decoder. Mỗi nền tảng cần đường hardware decode riêng (D3D11VA trên Windows, MediaCodec trên Android), đặt sau `hal::PlaybackDecoder` (mục 11.3).
 
 ### 6.4. Đầu ra âm thanh
 
@@ -756,6 +827,7 @@ home-media/
 │   ├── playback/       # AVIOContext, segment loader, ABR
 │   ├── audio/          # output, AEC, ducking
 │   └── watch_party/    # kênh sự kiện, chat, reaction, voice
+├── hal/                # CPU, bộ nhớ, video, hiển thị, âm thanh, khóa phần cứng (mục 11.3)
 ├── relay/              # media_relay: chuyển tiếp và đục lỗ NAT trên VPS
 ├── shared/
 │   ├── protocol/  serialization/  errors/  types/
@@ -777,6 +849,9 @@ Target đề xuất:
 | `media_worker` | Có | Giao tiếp với `media_api` qua IPC cục bộ có xác thực |
 | `media_client` | Có | Ứng dụng Windows, sau này Android |
 | `media_relay` | Không | Chạy trên VPS khi server sau CGNAT (mục 9.7); không phụ thuộc bắc cầu vào `crypto_core` |
+| `hal_core` | Không | CPU, bộ nhớ; mọi tiến trình được link |
+| `hal_media` | Có | Video, hiển thị, âm thanh; xử lý khung plaintext; chỉ worker và client |
+| `hal_keyvault` | Có | TPM, Android Keystore; chỉ worker và client |
 
 Giao tiếp `media_api` ↔ `media_worker` chỉ gồm lệnh có cấu trúc (tạo job, cấp envelope, đọc metadata cho thiết bị đã được phép), không bao giờ trả khóa ra ngoài worker.
 
@@ -796,6 +871,78 @@ Vì là ứng dụng native, server và client được dùng các API hệ th�
 | Ghim luồng, NUMA | Hoãn | Luồng demux, giải mã, lập lịch | `SetThreadGroupAffinity` | `pthread_setaffinity_np` | Chỉ xem lại nếu benchmark trên máy nhiều socket hoặc CPU lai cho thấy cần |
 
 Quyền large page cần bật khi cài đặt; hướng dẫn quản trị (mục 4.7) phải mô tả cách bật và cách kiểm tra đang hoạt động. Client Windows dùng cùng kỹ thuật cho cache và buffer decode khi có quyền.
+
+### 11.2. Phần cứng hỗ trợ
+
+Ba mức: **chính thức** (có máy thử, chạy benchmark và kiểm thử trước mỗi bản phát hành), **dự kiến** (interface HAL đã chừa chỗ, chưa có backend), và **không hỗ trợ**. Mọi máy thiếu phần cứng tăng tốc vẫn chạy được bằng backend phần mềm, chỉ chậm hơn.
+
+**Server**
+
+| Thành phần | Chính thức | Dự kiến | Không hỗ trợ | Ghi chú |
+| --- | --- | --- | --- | --- |
+| CPU | x86-64 có AVX2 | | ARM64, x86-64 không AVX2 | Kiểm tra AVX2 ngay khi khởi động, báo lỗi rõ ràng thay vì crash (mục 11.3) |
+| Hệ điều hành | Windows 11 x64, Linux x86-64 (glibc, kernel 5.15 trở lên) | | Windows 10 | Windows 10 đã hết hỗ trợ bảo mật |
+| GPU transcode | NVIDIA từ Turing (RTX 20, GTX 16) trở lên; AV1 encode cần Ada (RTX 40) trở lên | Theo thứ tự: Intel Quick Sync (iGPU và Arc), rồi AMD AMF/VAAPI | GPU NVIDIA trước Turing | Driver tối thiểu theo bản nv-codec-headers đi kèm FFmpeg. Số phiên NVENC của card GeForce do driver giới hạn, đo khi khởi động (mục 5.4.5) |
+| Tone-map | Vulkan 1.3 trên GPU NVIDIA (libplacebo) | Vulkan trên Intel, AMD | | Không có Vulkan thì dùng `zscale` + `tonemap` trên CPU (B3) |
+| Không GPU | Transcode CPU (mục 11.3) | | | Đủ cho job dựng sẵn; phiên trực tiếp có thể không đạt 1,2 lần thời gian thực |
+| TPM | TPM 2.0 (tùy chọn) | | TPM 1.2 | Chỉ dùng để niêm phong KEK khi admin bật tự mở khóa (mục 4.2) |
+| RAM | Tối thiểu 8 GiB, khuyến nghị 16 GiB | | | Gồm pool ghim cho GPU (mặc định 256 MiB) và cache đơn vị |
+| Lưu trữ | Ổ bất kỳ; database nên đặt trên SSD | | | Ciphertext để trên HDD được |
+
+Intel Quick Sync đáng là backend thứ hai: iGPU Intel rất phổ biến trên máy chủ gia đình nhỏ (mini PC, NUC), tiêu thụ điện thấp và encode được H.264, HEVC, và AV1 trên Arc và các thế hệ mới.
+
+**Client Windows**
+
+| Thành phần | Chính thức | Dự kiến | Ghi chú |
+| --- | --- | --- | --- |
+| Hệ điều hành | Windows 11 x64 | Windows 11 ARM64 | |
+| GPU | Vulkan 1.2 trở lên, mọi hãng | | Renderer cần Vulkan; không có thì không hỗ trợ |
+| Decode | D3D11VA (mọi hãng) là đường chính, phần mềm (FFmpeg, dav1d cho AV1) dự phòng | Vulkan Video, khi driver đủ ổn định | Năng lực decode thực tế được dò khi khởi động và báo lên hồ sơ (mục 5.1) |
+| Hiển thị | SDR; HDR10 khi Windows bật HDR cho màn hình đó | | Đọc qua DXGI; swapchain Vulkan HDR10 cần `VK_EXT_swapchain_colorspace` và `VK_EXT_hdr_metadata` |
+| Âm thanh | WASAPI chia sẻ (miniaudio); WASAPI độc quyền + IEC 61937 cho passthrough | | Dò định dạng bitstream receiver nhận được bằng `IsFormatSupported` (mục 5.5.2) |
+| Lưu khóa thiết bị | TPM 2.0 qua CNG (Microsoft Platform Crypto Provider); không có TPM thì dùng DPAPI | | TPM không làm X25519 trực tiếp, nên khóa thiết bị được bọc bằng một khóa nằm trong TPM |
+
+**Android (giai đoạn 9)**: dự kiến Android 10 trở lên, decode bằng MediaCodec, HDR qua `Display.getHdrCapabilities`, passthrough qua `AudioManager`, lưu khóa bằng Android Keystore (StrongBox nếu có). Chi tiết chốt khi bắt đầu giai đoạn 9.
+
+### 11.3. Lớp trừu tượng phần cứng (HAL)
+
+HAL gom mọi chỗ phụ thuộc phần cứng vào các interface C++ theo từng miền. Mỗi miền có nhiều backend, được chọn lúc chạy bằng cách dò; luôn có backend phần mềm để hệ thống chạy được trên máy không có phần cứng tăng tốc. Hồ sơ năng lực server (mục 5.4.5) và hồ sơ thiết bị (mục 5.1) được sinh ra từ kết quả dò của HAL, không viết tay.
+
+HAL không bọc lại FFmpeg. FFmpeg đã có lớp trừu tượng thiết bị riêng (`AVHWDeviceContext` cho CUDA, D3D11VA, Vulkan, QSV, VAAPI, MediaCodec). HAL nằm ở mức cao hơn: chọn loại thiết bị, tên encoder và filter, tham số theo từng backend, và quản lý tài nguyên mà FFmpeg không lo (phiên NVENC, VRAM, bộ nhớ ghim, khóa trong phần cứng).
+
+| Miền | Interface | Backend bản đầu | Backend dự kiến | Dùng ở |
+| --- | --- | --- | --- | --- |
+| CPU | `hal::CpuInfo` | cpuid: AVX2, AVX-512, AES-NI; số nhân, nhân P/E | ARM64 | Mọi tiến trình |
+| Bộ nhớ | `hal::Memory` | Large page, `mlock`, bộ nhớ ghim cho GPU (mục 11.1) | | Mọi tiến trình |
+| Decode video (server) | `hal::VideoDecoder` | NVDEC, CPU | Quick Sync, VAAPI | Worker |
+| Encode video | `hal::VideoEncoder` | NVENC; CPU: OpenH264, Kvazaar, SVT-AV1 | Quick Sync, AMF | Worker |
+| Xử lý khung | `hal::FrameProcessor` | CUDA (`scale_cuda`), Vulkan (libplacebo), CPU (`zscale`) | Quick Sync VPP, VAAPI | Worker |
+| Thiết bị GPU | `hal::GpuDevice` | CUDA ↔ Vulkan dùng chung bộ nhớ (external memory) | | Worker, client |
+| Decode video (client) | `hal::PlaybackDecoder` | D3D11VA chia sẻ texture sang Vulkan, phần mềm | Vulkan Video, MediaCodec | Client |
+| Hiển thị | `hal::Display` | DXGI + swapchain Vulkan | Android Display | Client |
+| Âm thanh | `hal::AudioOut`, `hal::AudioIn` | miniaudio (chia sẻ), WASAPI độc quyền cho passthrough | AAudio | Client |
+| Lưu khóa | `hal::KeyVault` | TPM 2.0 (CNG trên Windows, tpm2-tss trên Linux), phần mềm (chỉ passphrase hoặc DPAPI) | Android Keystore | Worker (niêm phong KEK), client (khóa thiết bị) |
+
+#### 11.3.1. Quy tắc chung
+
+- **Dò rồi mới dùng.** Mỗi backend có `probe()` trả về cấu trúc năng lực, hoặc lý do không dùng được (thiếu driver, driver cũ, hết phiên). Kết quả dò ghi vào log để admin xem.
+- **Thứ tự ưu tiên có cấu hình.** Mặc định: phần cứng trước, phần mềm sau. Admin bật, tắt hoặc ép một backend được, ví dụ tắt NVENC để nhường GPU cho việc khác.
+- **Lùi khi lỗi lúc chạy.** Backend lỗi (mục 5.4.7) bị đánh dấu suy giảm; bộ lập lịch chuyển các nhánh sang backend kế tiếp và báo admin. Sau một thời gian, backend được dò lại.
+- **Một variant, một cấu hình encoder.** Segment của cùng một variant chỉ ghép được với nhau khi do cùng backend và cùng tham số encoder tạo ra, trừ khi parameter set nằm trong từng segment (mục 5.4.2). Manifest ghi lại backend và tham số của từng variant; đổi backend giữa chừng nghĩa là tạo variant mới.
+- **Ranh giới khóa.** Backend xử lý khung plaintext hoặc khóa nằm trong target giữ khóa, chỉ worker và client được link. `media_api` chỉ link phần CPU và bộ nhớ (mục 11, kiểm tra bằng BoundaryCheck).
+- **Kiểm thử.** Mỗi backend chạy cùng một bộ kiểm thử tuân thủ: decode và encode phim mẫu, kiểm tra keyframe đúng timeline segment, so VMAF với ngưỡng. CI không có GPU chạy backend phần mềm và một backend giả lập; backend phần cứng chạy trên máy thử trước khi phát hành.
+
+#### 11.3.2. Encoder phần mềm và giấy phép
+
+Encoder phần mềm phổ biến nhất (x264, x265) là GPL nên không dùng được (mục 16). Backend CPU dùng:
+
+| Codec | Encoder | Giấy phép | Ghi chú |
+| --- | --- | --- | --- |
+| H.264 | OpenH264 | BSD-2 | Chất lượng thấp hơn x264 ở cùng bitrate; tự build thì không được Cisco trả phí bản quyền codec như khi dùng bản binary của Cisco |
+| HEVC | Kvazaar | BSD-3 | Chậm; nếu không đạt thì bậc 1080p SDR trên máy không GPU dùng H.264 |
+| AV1 | SVT-AV1 | BSD-3 kèm cấp quyền sáng chế AOM | Đã có trong thiết kế (mục 5.3) |
+
+Bitrate và chất lượng của backend CPU đo bằng B2 như với NVENC.
 
 ## 12. Công nghệ đề xuất
 
@@ -826,6 +973,9 @@ Quyền large page cần bật khi cài đặt; hướng dẫn quản trị (m�
 | E2EE chat/voice | MLS (MLSpp hoặc OpenMLS), SFrame | Cần đánh giá |
 | Audio output | miniaudio | Cần prototype |
 | AV1 encode dự phòng | SVT-AV1 (CPU) | Đề xuất |
+| H.264, HEVC encode dự phòng | OpenH264 (BSD-2), Kvazaar (BSD-3) (mục 11.3.2) | Đề xuất |
+| TPM trên Linux | tpm2-tss (BSD-2) | Đề xuất |
+| Decode AV1 phần mềm ở client | dav1d (BSD-2) | Đề xuất |
 | I/O bất đồng bộ, mạng | Asio standalone (IOCP, io\_uring) | Chốt |
 | Bộ cấp phát bộ nhớ | mimalloc + pool cố định | Chốt |
 
@@ -883,7 +1033,7 @@ Che hoàn toàn nhịp tải cần traffic giả liên tục, tốn băng thông
 
 1. **Crypto format và key store.** Chunk/segment AEAD, manifest đa variant, versioning, nonce, AAD, test vectors; KEK, Argon2id, mở khóa.
 2. **Import và local playback.** Media worker import file, mã hóa original; client phát qua AVIOContext, seek trên file hàng chục GB.
-3. **Hồ sơ năng lực và transcode.** Planner chọn bậc mục tiêu; NVENC/NVDEC, tone-map HDR sang SDR, CMAF keyframe căn hàng; kế hoạch phát và ABR.
+3. **Hồ sơ năng lực và transcode.** HAL cho CPU, video và hiển thị, sinh hồ sơ năng lực từ kết quả dò; planner chọn bậc mục tiêu; NVENC/NVDEC, tone-map HDR sang SDR, CMAF keyframe căn hàng; kế hoạch phát và ABR.
 4. **Server API và lưu trữ.** Tách `media_api` / `media_worker`, kênh Noise và RPC, upload/download, resume, ACL.
 5. **Thiết bị và chia sẻ.** Ghép bằng QR/token có admin duyệt, envelope, chia sẻ gia đình/khách, thu hồi.
 6. **Remote access.** Mở cổng NAT, IPv6, relay tự host khi CGNAT, padding, rate limit, kiểm thử bảo mật mạng.
@@ -965,6 +1115,14 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 - [ ] Bậc padding và chi phí băng thông (chờ B2).
 - [x] Đã chốt: xử lý CGNAT theo ba bậc: IPv6 trực tiếp, xin IPv4 công cộng, relay tự host trên VPS có đục lỗ NAT (mục 9.7).
 - [x] Đã chốt: SCTP (usrsctp) trên Noise cho đường UDP, KCP dự phòng (mục 9.8); benchmark B5 xác nhận thông số và có thể đổi sang phương án dự phòng.
+
+**Phần cứng**
+
+- [x] Đã chốt: server chỉ hỗ trợ x86-64 có AVX2 trở lên; GPU NVIDIA từ Turing trở lên (mục 11.2).
+- [x] Đã chốt: thứ tự backend GPU: NVIDIA, rồi Intel Quick Sync, rồi AMD.
+- [ ] Đề xuất: client và server Windows chỉ hỗ trợ Windows 11.
+- [x] Đã chốt: đường decode chính ở client là D3D11VA chia sẻ texture sang Vulkan, vì ổn định trên mọi driver; Vulkan Video chỉ xem lại khi đo được độ ổn định của driver.
+- [ ] Encoder CPU: OpenH264 và Kvazaar có đạt chất lượng chấp nhận được không (B2).
 
 **Thư viện**
 
