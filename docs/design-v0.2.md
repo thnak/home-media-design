@@ -527,6 +527,18 @@ Server giữ track Atmos gốc thành một variant audio sao chép nguyên (kh�
 - Dolby Vision: các profile thiết bị hiển thị được, hoặc không hỗ trợ.
 - Audio bitstream: E-AC-3, E-AC-3 JOC (Atmos), TrueHD, DTS; thường là năng lực của receiver qua HDMI, client đọc từ hệ điều hành hoặc để người dùng khai báo.
 
+#### 5.5.4. Chất lượng tối đa khi xem riêng
+
+Xem riêng (không phải Watch Party) luôn có thêm lựa chọn **Gốc** ở đầu danh sách chất lượng, áp dụng cho thư viện chung, thư viện cá nhân và mức "kín" (mục 4.8).
+
+- **Mặc định chọn Gốc** khi đo được đủ cả hai điều kiện: băng thông bền của kênh vượt bitrate của original với biên an toàn, và client decode được codec, độ phân giải, độ sâu màu đó đúng thời gian thực. Client đo decode bằng một đoạn mẫu, không giả định phần cứng nhanh hơn CPU (mục 11.3.1).
+- **Hạ bậc tự động** sang rendition thấp hơn khi một điều kiện không còn đúng, giữ nguyên track âm thanh đang chọn. Người dùng đặt cố định bậc thì không bị đổi.
+- **Quota và bậc tối đa của admin** (mục 4.6, 4.9) chỉ giới hạn bậc transcode và việc chia sẻ, không chặn người sở hữu hoặc người có quyền xem tải Gốc của chính file đó.
+- **Âm thanh:** Gốc kèm track Atmos gốc, passthrough nếu client khai báo (mục 5.5.2). Nếu không, client dùng track giải mã kênh nền hoặc downmix và hiển thị rõ lý do.
+- **Dolby Vision:** client Windows không hiển thị Dolby Vision. Khi phát Gốc mang DV, giao diện ghi rõ đang dùng lớp nền HDR10 (profile 7, 8.1), HLG (profile 8.4) hoặc HDR10 qua RPU (profile 5), không ghi "Dolby Vision".
+- **Mức "kín":** chỉ có Gốc, nên mức này là đường giữ chất lượng cao nhất; hạ bậc nghĩa là client chọn không phát hoặc server từ chối khi mạng không đủ (không có rendition).
+- Chỉ số liên quan (bitrate đang phát, lý do hạ bậc, chọn Gốc hay không) được thêm vào nhóm metric phía client (mục 11.4.3).
+
 Tên "Dolby Vision" và "Dolby Atmos" là thương hiệu; dự án không quảng bá là được chứng nhận Dolby, chỉ mô tả là nhận diện và chuyển đổi các định dạng này.
 
 ### 5.6. Import
@@ -1306,6 +1318,7 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 - [x] Đã chốt: mọi upload đi từ client app, file được mã hóa trước khi rời máy của người upload.
 - [x] Đã chốt: hỗ trợ xem riêng, thư viện cá nhân do thành viên upload, và chính sách chia sẻ do admin đặt.
 - [x] Đã chốt: thư viện cá nhân có hai mức, "cá nhân" (server transcode được) và "kín" (DEK chỉ bọc bằng khóa người dùng, không transcode) (mục 4.8).
+- [ ] Đề xuất: xem riêng luôn có lựa chọn "Gốc", mặc định chọn khi mạng và decode đủ, hạ bậc tự động; quota và bậc tối đa của admin không chặn người sở hữu tải Gốc của file mình; UI không ghi "Dolby Vision" khi chỉ phát lớp nền (mục 5.5.4).
 - [x] Đã chốt: khóa người dùng tách khỏi KEK, cho lịch sử xem và thư viện cá nhân; mất mọi thiết bị mà không có mã khôi phục thì mất dữ liệu kín (mục 4.1).
 - [x] Đã chốt mặc định chính sách chia sẻ: quyền upload tắt, Family chia sẻ asset cá nhân cho Family, Guest cần admin bật; không chia sẻ lại; khách có hạn dùng và giới hạn bậc (mục 4.9).
 
