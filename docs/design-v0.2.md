@@ -1,6 +1,6 @@
 # Home Media Server mã hóa — Thiết kế tổng quan v0.2
 
-Bản thiết kế tại thời điểm 16/10/2026. Bản sống được cập nhật trên Claude Docs.
+Cập nhật lần cuối 17/10/2026. Đây là bản thiết kế duy nhất, duy trì trong repo.
 
 Media server gia đình mã nguồn mở bằng C++20, kiểu Plex. Server do admin gia đình vận hành, được tin cậy để quản lý thư viện và transcode bằng GPU. Mã hóa bảo vệ tài sản của gia đình khỏi người ngoài, khách không được chia sẻ, thiết bị bị thu hồi, và việc lộ ổ cứng hay bản sao lưu.
 
@@ -17,6 +17,7 @@ Trạng thái: bản nháp thảo luận; mã nguồn ở giai đoạn benchmark
 | Quản lý thư viện | Client tự import | Admin gia đình import, quản lý metadata, chia sẻ |
 | Watch Party | Đồng bộ play/pause/seek | Thêm chat, reaction, yêu cầu tạm dừng, voice; tối đa 15 người, 4 tier |
 | Threat model | Chống cả server | Không chống server đang chạy bị chiếm quyền hay admin; chống mọi bên còn lại |
+| Kênh truyền | TLS | Noise thay TLS, chỉ có native app, ghép thiết bị bằng QR/token do admin cấp |
 
 ## 1. Mục tiêu và phạm vi
 
@@ -27,7 +28,7 @@ Trạng thái: bản nháp thảo luận; mã nguồn ở giai đoạn benchmark
 - Phát chất lượng gốc, seek tới vị trí bất kỳ mà không tải hoặc giải mã toàn bộ file.
 - Server transcode bằng GPU ra nhiều bậc phân giải, tone-map HDR sang SDR, dựa trên năng lực thực tế của các thiết bị.
 - Mỗi thiết bị chỉ nhận luồng nó decode và hiển thị được; ví dụ thiết bị 720p SDR không bao giờ nhận luồng gốc HDR.
-- Client Windows native trước, Android sau.
+- Client Windows native trước, Android sau. Mọi client là native app; không có web client.
 - Người dùng gia đình và khách được mời, chia sẻ theo từng asset.
 - Watch Party tối đa 15 người: đồng bộ phát, chat, reaction, tạm dừng để trò chuyện, voice; chat và voice mã hóa đầu cuối ở chế độ mặc định.
 - Truy cập qua LAN và Internet với cùng một mô hình mã hóa.
@@ -43,7 +44,7 @@ Trạng thái: bản nháp thảo luận; mã nguồn ở giai đoạn benchmark
 | GPU server | NVIDIA: NVDEC/NVENC cho transcode, CUDA cho tone-map |
 | Media engine | FFmpeg |
 | Rendering client | Vulkan |
-| Mã hóa | Mọi dữ liệu trên đĩa và bản sao lưu là ciphertext; TLS trên đường truyền; khóa nội dung cấp theo từng thiết bị |
+| Mã hóa | Mọi dữ liệu trên đĩa và bản sao lưu là ciphertext; kênh Noise xác thực hai chiều trên đường truyền (mục 9); khóa nội dung cấp theo từng thiết bị |
 | Plaintext phía server | Chỉ trong bộ nhớ của media worker khi chạy job; không bao giờ ghi xuống đĩa |
 | Transcode phía server | Được phép, ưu tiên dựng sẵn rendition |
 | Quy mô phòng | Tối đa 15 thành viên, có tier |
@@ -72,7 +73,7 @@ Server gia đình được tin cậy khi đang chạy; mã hóa đảm bảo m�
 | Media worker trên server | Có, khi đang chạy | Giữ khóa trong RAM khi chạy job |
 | Dịch vụ API, relay, SFU | Hạn chế | Tiếp xúc Internet, không giữ khóa nội dung |
 | Ổ đĩa, bản sao lưu | Không | Chỉ chứa ciphertext |
-| Mạng LAN và Internet | Không | TLS, nội dung bên trong vẫn là ciphertext |
+| Mạng LAN và Internet | Không | Kênh Noise, nội dung bên trong vẫn là ciphertext |
 | Thiết bị được cấp quyền | Trong phạm vi quyền | Chỉ nhận khóa của asset được chia sẻ |
 | Khách ngoài phạm vi, thiết bị bị thu hồi, người ngoài | Không |  |
 
@@ -118,7 +119,9 @@ Thư viện không tra cứu nguồn bên ngoài. Admin nhập tên, mô tả, p
 
 ### 3.6. Padding
 
-Khi server được tin cậy, việc nhận dạng phim qua kích thước segment chỉ còn là rủi ro trước người quan sát mạng. Padding segment là tùy chọn, mặc định tắt.
+Chuỗi kích thước segment theo thời gian đủ để người quan sát mạng đoán phim, kể cả khi nội dung đã mã hóa. Padding trên kênh truyền bật mặc định: mỗi lần gửi được đệm lên bậc kích thước gần nhất (bậc tăng theo hàm mũ, kiểu Padmé) bên trong khung Noise, nên không tốn dung lượng lưu trữ (mục 9.3). Bậc cụ thể và chi phí băng thông chờ benchmark B2.
+
+Padding khi lưu, để che cả trước người lấy được ổ đĩa, là tùy chọn, mặc định tắt vì tốn dung lượng.
 
 ## 4. Quản lý khóa và quyền truy cập
 
@@ -144,7 +147,7 @@ Passphrase admin (Argon2id) và/hoặc TPM
 
 ### 4.3. Khóa thiết bị
 
-Mỗi thiết bị có cặp khóa riêng; khóa công khai dùng để nhận envelope DEK. Thiết bị mới chỉ được đăng ký khi admin duyệt, ví dụ quét QR từ client admin. Đăng ký kèm hồ sơ năng lực ban đầu (mục 5.1).
+Mỗi thiết bị có cặp khóa riêng; khóa công khai dùng để nhận envelope DEK. Thiết bị mới chỉ được đăng ký khi admin duyệt, qua QR hoặc token do admin cấp (mục 9.2). Đăng ký kèm hồ sơ năng lực ban đầu (mục 5.1).
 
 ### 4.4. DEK và envelope
 
@@ -430,7 +433,7 @@ Phòng xem chung do server điều phối: quản lý thành viên, relay sự k
 | Server | Client |
 | --- | --- |
 | Tạo phòng, quản lý thành viên, trần số người | Đồng bộ phát, xử lý play/pause/seek |
-| Relay sự kiện (WebSocket), SFU voice | Gửi presence: vị trí, buffer, độ trễ |
+| Relay sự kiện (luồng RPC trên kênh Noise), SFU voice | Gửi presence: vị trí, buffer, độ trễ |
 | Lập kế hoạch phát riêng cho từng thành viên | Áp push-to-talk, hiển thị reaction |
 | Rate limit, kick, mute, chống lạm dụng | Kiểm tra sequence, chống replay |
 
@@ -465,7 +468,8 @@ Tách kênh để một loại sự kiện không làm trễ loại khác:
 - Codec Opus, khoảng 24–32 kbps mỗi người.
 - Tier 1: P2P mesh (DTLS-SRTP), vốn đã đầu cuối giữa các máy.
 - Tier 2 trở lên: SFU trên server. Ở phòng riêng tư, khung voice được mã hóa thêm bằng SFrame với khóa dẫn xuất từ epoch MLS, nên SFU chỉ chuyển tiếp mà không nghe được.
-- Tính năng "chỉ chuyển tiếp N người nói to nhất" cần mức âm lượng trong header gói tin; đây là một rò rỉ nhỏ được chấp nhận ở tier 3–4.
+- Tính năng "chỉ chuyển tiếp N người nói to nhất" cần SFU biết mức âm lượng, nằm trong header extension RTP (RFC 6464). Header này được mã hóa bằng cryptex (RFC 9335) nên người quan sát mạng không đọc được; SFU vẫn đọc được, là rò rỉ nhỏ được chấp nhận ở tier 3–4. Cần xác nhận libdatachannel và libsrtp hỗ trợ cryptex.
+- Opus chạy CBR và tắt DTX, để kích thước và nhịp gói không đổi theo lời nói; Opus VBR cho phép đoán một phần nội dung qua độ dài gói.
 - Chuyển mesh sang SFU theo kiểu make-before-break.
 
 **Stack voice (đã chốt).** Voice chỉ có audio, tối đa 15 người, nên không cần toàn bộ libwebrtc (bản build rất nặng, khó tích hợp trên Windows và Android). Dự án ghép các phần nhỏ:
@@ -549,27 +553,169 @@ Phòng tạm khóa join khi đầy 15 người, hoặc khi chất lượng phát
 
 Người muốn vào thấy lý do bị chặn. Phòng tự mở lại khi các chỉ số ổn định đủ lâu (có độ trễ, như khi chuyển tier). Thành viên đang ở trong phòng không bị đẩy ra.
 
-## 9. LAN và truy cập từ xa
+## 9. Kênh truyền, ghép thiết bị và truy cập từ xa
 
-LAN và Internet dùng chung một mô hình mã hóa; LAN không mặc nhiên là mạng tin cậy.
+Mọi client là native app, không có web client, nên dự án không dùng TLS mà dùng kênh mã hóa riêng dựa trên Noise Protocol Framework. LAN và Internet dùng chung một kênh; LAN không mặc nhiên là mạng tin cậy, kể cả khi admin cài đặt từ mạng nhà.
 
-- HTTPS/TLS cho API, upload/download.
-- WebSocket qua TLS cho các kênh control, chat, reaction, presence.
-- WebRTC (DTLS-SRTP) cho voice P2P; SFU trên server cho voice tier 2 trở lên, mã hóa từng chặng.
-- Media và metadata luôn là ciphertext theo chunk/segment, độc lập với TLS.
-- Xác thực thiết bị, ACL, rate limit, giới hạn kích thước request.
+Mục tiêu: người ngoài hệ thống không đọc được nội dung, không nhận ra dịch vụ khi quét cổng và không suy ra được đang xem phim gì từ lưu lượng.
 
-Voice P2P cần STUN/TURN để vượt NAT. TURN và mọi relay chỉ chuyển tiếp ciphertext, không được thay đổi mô hình khóa.
+### 9.1. Kênh Noise
 
-Client phát hiện khi đang cùng LAN với server để ưu tiên đường nội bộ và không tính vào ngân sách uplink (mục 8.2).
+| Tình huống | Pattern | Ghi chú |
+| --- | --- | --- |
+| Ghép thiết bị mới | `Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s` | Hai bên trao khóa tĩnh; token trong QR làm PSK |
+| Kết nối thường ngày | `Noise_IKpsk2_25519_ChaChaPoly_BLAKE2s` | Như WireGuard: client biết sẵn khóa server, bắt tay 1-RTT; PSK riêng của thiết bị cấp khi ghép |
+
+- Danh tính thiết bị là cặp khóa tĩnh sinh trên thiết bị; server giữ danh sách khóa công khai được phép. Không có CA, chứng chỉ, SNI hay tên miền công khai.
+- Server im lặng với người lạ: gói bắt tay không xác thực được thì bị bỏ qua, không trả lời. Khi tải cao, chống DoS bằng cookie như WireGuard.
+- Đổi khóa phiên định kỳ theo thời gian và số byte; chống replay bằng bộ đếm trong khung.
+- Trên kênh là RPC nhị phân tự định nghĩa (mục 10), thay cho REST và WebSocket. Control, chat, reaction, presence và tải đơn vị là các luồng riêng trên cùng kênh, để luồng này không chặn luồng khác (mục 7.2).
+- Dùng thư viện Noise có sẵn đã được kiểm định (mục 12), không tự viết bắt tay.
+- Kênh kết thúc ở `media_api`; khóa tĩnh của server chỉ là khóa đường truyền, không mở được nội dung. Passphrase mở key store không được để `media_api` đọc: client admin mã hóa nó tới khóa công khai của media worker, API chỉ chuyển tiếp.
+- Các khóa của thiết bị (kênh Noise, nhận envelope DEK ở mục 4.4, chữ ký MLS ở mục 4.5) được đăng ký cùng lúc khi ghép và thu hồi cùng lúc. Thu hồi xóa khóa khỏi danh sách và ngắt phiên đang mở; lần bắt tay sau bị bỏ qua im lặng.
+- Lớp vận chuyển: hỗ trợ cả UDP và TCP, cùng một giao thức Noise và RPC bên trên.
+  - **UDP là đường chính**: im lặng hoàn toàn với người lạ, không bị chặn đầu hàng (head-of-line) giữa các luồng. Phải có truyền tin cậy, điều khiển tắc nghẽn và chia khung theo MTU; dùng thư viện có sẵn thay vì tự viết (mục 9.8).
+  - **TCP là đường dự phòng**, cho mạng chặn UDP (wifi công cộng, mạng công ty). Bắt tay TCP vẫn cho người quét biết cổng đang mở, dù không ai bắt tay Noise được.
+  - Client thử UDP trước, sau một khoảng ngắn không có phản hồi thì thử song song TCP, giữ đường nào bắt tay xong trước. Admin tắt được TCP nếu mọi thiết bị dùng được UDP.
+
+### 9.2. Ghép thiết bị
+
+1. Admin mở phiên ghép trên client admin và chọn vai trò cho thiết bị mới (mục 4.6).
+2. Server sinh token một lần 128 bit, hết hạn sau 10 phút, dùng xong là hủy, rồi tạo mã ghép theo định dạng ở mục 9.6: khóa công khai tĩnh của server, danh sách IP:Port (LAN và từ xa, UDP và TCP), token và phiên bản giao thức.
+3. Thiết bị mới quét QR, sinh cặp khóa và bắt tay `XXpsk3` với token làm PSK. Không có QR thì không bắt tay được; thiết bị cũng xác thực được server qua khóa trong QR.
+4. Thiết bị gửi khóa công khai và hồ sơ năng lực ban đầu (mục 5.1). Cả hai màn hình hiện một mã xác nhận ngắn dẫn xuất từ bản ghi bắt tay; admin so khớp rồi duyệt.
+5. Server cấp PSK riêng cho thiết bị; từ đó thiết bị kết nối bằng `IKpsk2`.
+
+Thiết bị admin đầu tiên được ghép bằng QR hiện tại console hoặc màn hình máy server khi cài đặt. Vì QR chứa khóa công khai của server, bước này không phụ thuộc vào việc mạng nhà có an toàn hay không.
+
+Ghép từ xa, ví dụ cho khách: admin gửi mã ghép dạng chuỗi (cùng nội dung với QR) qua một kênh khác. Nếu dùng mã ngắn để gõ tay thì bắt tay phải qua PAKE (CPace), để người nghe lén không dò mã offline được; mã ngắn hết hạn nhanh và giới hạn số lần thử.
+
+### 9.3. Chống phân tích lưu lượng
+
+Mã hóa không che được kích thước và nhịp gói. Mặc định:
+
+- Padding trên kênh theo bậc kích thước (mục 3.6). Byte chunk của original vốn đã có kích thước cố định.
+- Mỗi request gộp số đơn vị cố định theo thỏa thuận lúc kết nối (mục 3.2).
+- Voice dùng Opus CBR, tắt DTX; mức âm lượng gửi SFU được mã hóa (mục 7.5).
+- Không bắt buộc DNS hay tên miền; client kết nối bằng IP:Port trong mã ghép, có thể kèm DDNS nếu admin chọn.
+
+Đã chốt không che nhịp tải bằng traffic giả ở bản đầu. Phần còn lộ được ghi ở mục 13.4.
+
+### 9.4. LAN, Internet và voice
+
+- Media và metadata luôn là ciphertext theo chunk/segment, độc lập với kênh truyền.
+- ACL, rate limit và giới hạn kích thước request vẫn áp ở `media_api` sau khi bắt tay.
+- Voice: WebRTC bắt buộc DTLS-SRTP. Fingerprint DTLS của từng thiết bị được trao qua kênh Noise để xác thực. Voice P2P cần STUN/TURN để vượt NAT; credential TURN ngắn hạn được cấp qua kênh Noise. TURN chạy trên cùng VPS với relay nếu có (mục 9.7). TURN và mọi relay chỉ chuyển tiếp ciphertext, không được thay đổi mô hình khóa.
+- Client phát hiện khi đang cùng LAN với server để ưu tiên đường nội bộ và không tính vào ngân sách uplink (mục 8.2).
+- Truy cập từ Internet đi qua cổng được mở trên router (mục 9.5).
+
+### 9.5. Mở cổng NAT
+
+Server mở cổng trên router để client từ Internet kết nối thẳng, không qua relay. Chỉ mở cổng của kênh Noise; cổng này im lặng với người lạ nên mở ra Internet không làm lộ dịch vụ (với UDP).
+
+1. Khi khởi động, server thử lần lượt PCP (RFC 6887), NAT-PMP và UPnP IGD để xin ánh xạ cổng UDP và TCP, rồi gia hạn trước khi hết hạn. Với IPv6, PCP dùng để mở lỗ trên tường lửa thay cho ánh xạ.
+2. Server ghi lại IP:Port ngoài mà router báo về và đưa vào danh sách endpoint.
+3. Nếu router không hỗ trợ cả ba giao thức, hoặc admin đã tắt chúng, admin tự port forward theo hướng dẫn quản trị và nhập IP:Port ngoài vào client admin.
+4. Nếu IP ngoài router báo về là địa chỉ riêng hoặc nằm trong dải CGNAT `100.64.0.0/10`, server báo admin rằng đang bị NAT nhiều lớp, mở cổng không có tác dụng, và hướng dẫn các bậc xử lý ở mục 9.7.
+5. Server không tự kiểm tra được cổng ngoài có vào được không (router thường không hỗ trợ hairpin). Thiết bị đã ghép khi kết nối từ mạng ngoài sẽ báo lại kết quả, và client admin hiển thị trạng thái "truy cập từ xa: đạt / chưa xác nhận / không đạt".
+
+IP ngoài của mạng gia đình có thể đổi. Mỗi lần kết nối, server gửi danh sách endpoint mới nhất cho thiết bị qua kênh Noise. Thiết bị ở ngoài đúng lúc IP đổi sẽ mất đường tới server cho tới khi về LAN, quét lại mã ghép, hoặc admin bật DDNS.
+
+### 9.6. Định dạng mã ghép
+
+QR và mã dạng chuỗi dùng chung một nội dung, dạng URI:
+
+```
+hm://pair/1?k=<khóa công khai server>&t=<token>&e=<endpoint>,<endpoint>,...&r=<vai trò>&x=<hết hạn>
+```
+
+| Trường | Nội dung |
+| --- | --- |
+| `1` | Phiên bản định dạng mã ghép |
+| `k` | Khóa công khai X25519 tĩnh của server, base64url |
+| `t` | Token một lần 128 bit, base64url; dùng làm PSK của `XXpsk3` |
+| `e` | Danh sách endpoint theo thứ tự ưu tiên, mỗi endpoint là `u` (UDP) hoặc `t` (TCP) kèm IP:Port, ví dụ `u192.168.1.10:41641`, `u203.0.113.5:41641`, `t[2001:db8::10]:41641`; endpoint qua relay (mục 9.7) có dạng `ru198.51.100.7:41641/<route>` hoặc `rt…` |
+| `r` | Vai trò sẽ cấp: admin, family, guest |
+| `x` | Thời điểm hết hạn (Unix time) |
+
+- Endpoint chỉ là gợi ý để tìm server; lòng tin đến từ khóa `k`. Kẻ sửa IP:Port trong mã chỉ làm việc ghép thất bại, không mạo danh được server.
+- Thiết bị thử song song mọi endpoint, ưu tiên endpoint LAN, rồi lưu lại danh sách để dùng cho các lần sau.
+- Mã chứa token nên phải gửi qua kênh riêng tư và coi như mật khẩu dùng một lần.
+- Mã ngắn để gõ tay gồm một endpoint và mã PAKE, ví dụ `203.0.113.5:41641` kèm `K7Q2-9F4M`. Vì không có `k`, PAKE xác thực luôn cả server.
+
+### 9.7. Khi server sau CGNAT
+
+Khi nhà mạng dùng CGNAT, router gia đình không có IP công cộng nên mở cổng ở mục 9.5 không có tác dụng. Có ba bậc xử lý, thử theo thứ tự. Không bậc nào thay đổi mô hình khóa: kênh Noise luôn đầu cuối giữa thiết bị và server, mọi thứ ở giữa chỉ thấy ciphertext.
+
+| Bậc | Cách | Cần gì | Giới hạn |
+| --- | --- | --- | --- |
+| A. IPv6 trực tiếp | Server có IPv6 công cộng; mở lỗ tường lửa bằng PCP, UPnP IGDv2 hoặc làm tay | Nhà mạng cấp IPv6 cho đường truyền nhà | Thiết bị ở mạng không có IPv6 (một số wifi công cộng, mạng công ty) không vào được |
+| B. IPv4 công cộng | Admin xin nhà mạng cấp IP công cộng (động hoặc tĩnh), rồi dùng mục 9.5 | Liên hệ nhà mạng, có thể tốn phí | Phụ thuộc chính sách nhà mạng |
+| C. Relay tự host | VPS nhỏ có IP công cộng chạy `media_relay`; thử đục lỗ NAT để đi thẳng, không được thì chuyển tiếp qua VPS | Một VPS do admin thuê | Tốn băng thông VPS khi phải chuyển tiếp |
+
+Bậc A luôn được thử song song với IPv4: server đưa endpoint IPv6 vào mã ghép nếu có. IPv6 đã phổ biến ở cáp quang và di động tại Việt Nam, nhưng cần kiểm tra theo từng gói cước. Bậc B không cần mã mới, chỉ cần hướng dẫn quản trị.
+
+Ngoài ba bậc trên, admin có thể dùng mạng overlay sẵn có (WireGuard tới VPS, Tailscale hoặc Headscale). Dự án không cần mã riêng cho trường hợp này: endpoint trong mã ghép là IP trong overlay. Bên điều phối overlay thấy được thiết bị nào nói chuyện với nhau, nhưng không đọc được nội dung.
+
+#### 9.7.1. Relay tự host
+
+`media_relay` là tiến trình riêng chạy trên VPS Linux, không giữ khóa nội dung và không cần được tin.
+
+1. **Ghép relay với server.** Admin cài relay lên VPS; relay in một mã ghép như mục 9.6. Server ghép với relay bằng Noise `XXpsk3`, từ đó giữ một kết nối ra relay bằng `IKpsk2`. Vì kết nối đi từ trong nhà ra, CGNAT không chặn.
+2. **Giữ sống.** Ánh xạ UDP của CGNAT thường hết hạn sau khoảng 30 giây không có dữ liệu, nên server gửi gói giữ sống mỗi 25 giây (chỉnh được). Có đường TCP dự phòng như mục 9.1.
+3. **Route.** Relay cấp cho server một route ID ngẫu nhiên. Mã ghép của thiết bị chứa endpoint relay kèm route ID (mục 9.6). Route ID không bí mật; nó chỉ cho relay biết chuyển gói tới server nào.
+4. **Chuyển tiếp.** Thiết bị gửi gói Noise tới relay, kèm route ID ở phần đầu không mã hóa. Relay chuyển nguyên gói qua kết nối của server. Gói có route ID sai bị bỏ; gói có route ID đúng nhưng bắt tay sai bị server bỏ. Như vậy cả relay và server vẫn im lặng với người lạ. Relay áp rate limit theo IP nguồn để chống gửi rác.
+5. **Đục lỗ NAT.** Khi phiên Noise đã lập qua relay, relay cho hai bên biết địa chỉ công cộng mà nó thấy của bên kia; hai bên cùng gửi gói thăm dò tới nhau trong vài giây. Nếu thông, phiên chuyển sang đường thẳng. Phiên Noise không gắn với địa chỉ (như WireGuard), nên đổi đường không phải bắt tay lại. Nếu CGNAT ánh xạ phụ thuộc đích (symmetric NAT), đục lỗ thất bại và phiên giữ đường relay. Đường TCP không đục lỗ, luôn qua relay.
+6. **Endpoint ổn định.** IP của VPS không đổi, nên thiết bị ở ngoài vẫn tìm được server khi IP nhà thay đổi (mục 9.5).
+
+Băng thông: lưu lượng qua relay đi hai lần (nhà → VPS → thiết bị), nên tính vào cả uplink nhà lẫn băng thông VPS. Admin khai báo băng thông relay để ngân sách ở mục 8.2 tính đúng. VPS cũng chạy TURN cho voice, ví dụ coturn (BSD).
+
+Relay bị chiếm quyền thì kẻ tấn công thấy IP, thời điểm và lưu lượng của các thiết bị, và có thể chặn hoặc làm trễ gói; không đọc được nội dung và không mạo danh được server hay thiết bị (mục 13).
+
+### 9.8. Truyền tin cậy trên UDP
+
+Yêu cầu với lớp truyền trên UDP:
+
+- Nhiều luồng không chặn nhau: lệnh pause không bị kẹt sau một đơn vị media đang tải (mục 7.2).
+- Mức tin cậy theo luồng: control và chat cần tin cậy, có thứ tự; presence chỉ cần bản mới nhất; reaction best-effort.
+- Điều khiển tắc nghẽn công bằng với TCP, để không chiếm hết uplink nhà và không làm nghẹt voice.
+- Lớp dưới tùy biến được, để mỗi gói chạy trong một khung Noise.
+- C hoặc C++, giấy phép tương thích MIT, chạy trên Windows, Linux, Android.
+
+| Thư viện | Giấy phép | Nhiều luồng | Tin cậy từng phần | Tắc nghẽn | Chạy trên Noise | Nhận xét |
+| --- | --- | --- | --- | --- | --- | --- |
+| usrsctp | BSD-3 | Có (SCTP stream) | Có (PR-SCTP) | Chuẩn, công bằng với TCP | Có (`AF_CONN`, cách WebRTC chạy SCTP trên DTLS) | Đã nằm sẵn trong cây phụ thuộc qua libdatachannel. Mã lớn, từng có lỗ hổng |
+| KCP | MIT | Không, mỗi luồng một instance | Không | Có; chế độ nhanh hy sinh tính công bằng | Có (chỉ là thuật toán) | Nhỏ, độ trễ thấp; không tự dò MTU; dễ chiếm băng thông |
+| ENet | MIT | Có (channel) | Có | Đơn giản | Phải sửa lớp socket | Hướng game, thông lượng lớn chưa chắc |
+| QUIC (ngtcp2, msquic, picoquic) | MIT | Có | Có (datagram) | Tốt nhất (CUBIC, BBR) | Không: gắn với TLS 1.3 | Server phải trả lời gói Initial của người lạ, phá tính chất im lặng; thay TLS bằng Noise là tự làm một biến thể QUIC |
+| GameNetworkingSockets | BSD-3 | Có (lane) | Có | Có | Không: có mã hóa riêng | Trùng vai với Noise |
+
+**Đề xuất: SCTP (usrsctp) trên Noise**, như WebRTC chạy SCTP trên DTLS nhưng thay DTLS bằng Noise.
+
+- Mỗi gói UDP là một khung Noise chứa một gói SCTP. MTU của SCTP đặt khoảng 1200 byte, chừa chỗ cho phần đầu Noise, relay và IPv6, để tránh phân mảnh IP.
+- Phân vai: Noise lo xác thực, mã hóa, chống replay và đổi địa chỉ (roaming); SCTP lo tin cậy, điều khiển tắc nghẽn và cắt ghép tin nhắn. Tắt multihoming của SCTP.
+- Ánh xạ luồng:
+
+| Luồng | Chế độ SCTP |
+| --- | --- |
+| control, chat, RPC chung | Tin cậy, có thứ tự |
+| Tải đơn vị media | Tin cậy; mỗi request một stream, để đơn vị này không chặn đơn vị khác |
+| reaction | PR-SCTP, không truyền lại |
+| presence | PR-SCTP, không truyền lại; bên nhận chỉ giữ bản mới nhất |
+
+- usrsctp chỉ xử lý gói sau khi Noise đã xác thực, nên người lạ không chạm được vào parser SCTP; bề mặt tấn công thu về các thiết bị đã ghép. Vẫn cần fuzz lớp này (mục 15).
+- Đường TCP dự phòng không dùng SCTP mà dùng lớp ghép kênh tối giản tự viết trên Noise (khung có stream ID và độ dài), chấp nhận chặn đầu hàng. Lớp RPC bên trên không biết đang chạy trên đường nào.
+- Module truyền tải nằm sau một interface riêng, như module voice. Nếu usrsctp không đạt benchmark B5, phương án dự phòng là KCP, mỗi luồng một instance, chạy chế độ bình thường (bật điều khiển tắc nghẽn).
 
 ## 10. API sơ bộ
 
-| Endpoint | Chức năng |
+Mọi lệnh chạy dưới dạng RPC nhị phân trên kênh Noise (mục 9.1); tên dạng đường dẫn chỉ để dễ đọc. Các dòng `WS` là luồng hai chiều lâu dài trên cùng kênh.
+
+| Lệnh | Chức năng |
 | --- | --- |
-| `POST /v1/devices/enroll` | Đăng ký thiết bị (admin duyệt) |
+| `POST /v1/devices/enroll` | Ghép thiết bị qua bắt tay `XXpsk3` (mục 9.2), admin duyệt |
 | `PUT /v1/devices/{id}/capabilities` | Cập nhật hồ sơ năng lực |
-| `POST /v1/keystore/unlock` | Admin mở khóa key store |
+| `POST /v1/keystore/unlock` | Admin mở khóa key store; passphrase mã hóa tới media worker, API chỉ chuyển tiếp |
 | `POST /v1/library/imports` | Tạo phiên upload từ client admin |
 | `PUT /v1/library/imports/{id}/chunks/{index}` | Upload chunk đã mã hóa của file nguồn |
 | `GET /v1/assets/{id}/playback-plan` | Lấy kế hoạch phát: tập variant được phép cho thiết bị này |
@@ -584,7 +730,7 @@ Client phát hiện khi đang cùng LAN với server để ưu tiên đường n
 | `WS /v1/rooms/{id}/events` | Relay control, chat, reaction, presence |
 | `WS /v1/rooms/{id}/signaling` | Signaling WebRTC cho voice |
 
-Đây vẫn là bản phác thảo. Trước khi triển khai cần định nghĩa schema, mã lỗi, phân trang, idempotency, quyền, giới hạn kích thước và phiên bản API.
+Đây vẫn là bản phác thảo. Trước khi triển khai cần định nghĩa khung RPC, schema, mã lỗi, phân trang, idempotency, quyền, giới hạn kích thước và phiên bản API.
 
 ## 11. Cấu trúc dự án C++20/CMake
 
@@ -595,7 +741,7 @@ home-media/
 ├── CMakeLists.txt
 ├── cmake/
 ├── server/
-│   ├── api/            # REST, WebSocket, auth, ACL
+│   ├── api/            # kênh Noise, RPC, ghép thiết bị, ACL
 │   ├── rooms/          # thành viên, tier, ngân sách, relay
 │   ├── sfu/            # voice SFU
 │   ├── storage/        # đọc/ghi ciphertext, resume
@@ -610,8 +756,10 @@ home-media/
 │   ├── playback/       # AVIOContext, segment loader, ABR
 │   ├── audio/          # output, AEC, ducking
 │   └── watch_party/    # kênh sự kiện, chat, reaction, voice
+├── relay/              # media_relay: chuyển tiếp và đục lỗ NAT trên VPS
 ├── shared/
 │   ├── protocol/  serialization/  errors/  types/
+│   └── transport/      # Noise, SCTP trên UDP, ghép kênh trên TCP
 ├── tests/
 │   ├── unit/  integration/  security/  fuzz/  interop/
 └── docs/
@@ -628,6 +776,7 @@ Target đề xuất:
 | `media_api` | Không | Không phụ thuộc bắc cầu vào `crypto_core` hay `media_transcode` |
 | `media_worker` | Có | Giao tiếp với `media_api` qua IPC cục bộ có xác thực |
 | `media_client` | Có | Ứng dụng Windows, sau này Android |
+| `media_relay` | Không | Chạy trên VPS khi server sau CGNAT (mục 9.7); không phụ thuộc bắc cầu vào `crypto_core` |
 
 Giao tiếp `media_api` ↔ `media_worker` chỉ gồm lệnh có cấu trúc (tạo job, cấp envelope, đọc metadata cho thiết bị đã được phép), không bao giờ trả khóa ra ngoài worker.
 
@@ -643,10 +792,10 @@ Vì là ứng dụng native, server và client được dùng các API hệ th�
 | Bộ cấp phát | Bật mặc định | Toàn bộ server; pool cố định cho segment, packet, khung audio | mimalloc (MIT) | Như Windows | Tránh phân mảnh khi chạy liên tục nhiều ngày |
 | Large page | Bật mặc định khi có quyền, tự lùi về trang thường | Cache chunk/segment, buffer giải mã, buffer FFmpeg | `VirtualAlloc` với `MEM_LARGE_PAGES`, quyền SeLockMemoryPrivilege cấp khi cài | `madvise(MADV_HUGEPAGE)`; hugetlbfs không bắt buộc | Trên Windows không bị swap, giảm rủi ro plaintext xuống đĩa (mục 13.3) |
 | Bộ nhớ host ghim cho GPU | Bật, có trần | Pool cố định cho CPU ↔ GPU (mặc định tối đa 256 MiB, chỉnh được) | `cuMemHostAlloc` | `cuMemHostAlloc` | Không bị swap, nhưng chiếm RAM cố định nên phải giới hạn |
-| Gửi zero-copy | Linux: tùy chọn; Windows: hoãn | Gửi chunk/segment đã mã hóa thẳng từ đĩa ra mạng | Hoãn: TLS chạy trong ứng dụng nên không dùng được `TransmitFile` | `sendfile` + kTLS khi kernel và OpenSSL hỗ trợ | Khả thi vì ciphertext lưu sẵn, gửi đi nguyên dạng |
+| Gửi zero-copy | Không áp dụng | Gửi chunk/segment đã mã hóa thẳng từ đĩa ra mạng | Không dùng được `TransmitFile` | Không dùng được `sendfile` | Mỗi khung Noise được mã hóa và đệm trong ứng dụng (mục 9); chi phí thêm là một lần ChaCha20, nhỏ so với băng thông mạng (B1) |
 | Ghim luồng, NUMA | Hoãn | Luồng demux, giải mã, lập lịch | `SetThreadGroupAffinity` | `pthread_setaffinity_np` | Chỉ xem lại nếu benchmark trên máy nhiều socket hoặc CPU lai cho thấy cần |
 
-Quyền large page và kTLS cần bật khi cài đặt; hướng dẫn quản trị (mục 4.7) phải mô tả cách bật và cách kiểm tra đang hoạt động. Client Windows dùng cùng kỹ thuật cho cache và buffer decode khi có quyền.
+Quyền large page cần bật khi cài đặt; hướng dẫn quản trị (mục 4.7) phải mô tả cách bật và cách kiểm tra đang hoạt động. Client Windows dùng cùng kỹ thuật cho cache và buffer decode khi có quyền.
 
 ## 12. Công nghệ đề xuất
 
@@ -664,7 +813,13 @@ Quyền large page và kTLS cần bật khi cài đặt; hướng dẫn quản t
 | Voice transport, AEC | libdatachannel + webrtc-audio-processing + libopus; libwebrtc dự phòng | Cần đánh giá |
 | Voice codec | Opus | Đề xuất |
 | Server storage | Filesystem + database metadata (mã hóa) | Đề xuất |
-| API / realtime | HTTPS/REST, WebSocket | Đề xuất |
+| Kênh truyền | Noise (`IKpsk2`, `XXpsk3`); không TLS, không web client | Chốt |
+| Thư viện Noise | noise-c (MIT) hoặc thư viện tương đương đã được kiểm định | Cần chọn |
+| API / realtime | RPC nhị phân trên kênh Noise | Đề xuất |
+| PAKE cho mã ghép ngắn | CPace | Cần đánh giá |
+| Truyền tin cậy trên UDP | usrsctp (BSD-3) trên khung Noise; KCP (MIT) dự phòng (mục 9.8) | Chốt, B5 xác nhận |
+| Relay khi CGNAT | `media_relay` tự viết, chạy trên VPS; coturn (BSD) cho TURN voice (mục 9.7) | Chốt |
+| Mở cổng NAT | miniupnpc và libnatpmp (BSD); PCP tự viết hoặc thư viện tương đương | Đề xuất |
 | IPC api ↔ worker | Unix socket / named pipe có xác thực | Cần chọn |
 | Test / fuzz | GoogleTest hoặc Catch2; libFuzzer hoặc AFL++ | Cần chọn |
 | Android | C++ core qua JNI, MediaCodec, UI riêng | Đề xuất |
@@ -687,6 +842,7 @@ Mục tiêu: không ai ngoài admin, server đang chạy và thiết bị đư�
 - Thiết bị bị thu hồi (với nội dung và chia sẻ mới).
 - Ổ cứng, NAS hoặc bản sao lưu bị lấy cắp hay rò rỉ.
 - Nghe lén hoặc sửa đổi trên mạng, kể cả LAN.
+- Quét cổng và nhận diện dịch vụ từ Internet; đoán phim đang xem qua lưu lượng.
 - Sửa, tráo, cắt cụt ciphertext trên đĩa.
 - Replay sự kiện điều khiển hoặc chat.
 - Lỗ hổng ở dịch vụ API: không được dẫn thẳng tới khóa nội dung (tách tiến trình, mục 11).
@@ -711,7 +867,15 @@ Mục tiêu: không ai ngoài admin, server đang chạy và thiết bị đư�
 
 ### 13.4. Kênh rò rỉ trước người quan sát mạng
 
-Dù có TLS, người quan sát vẫn thấy thời điểm, lưu lượng, kích thước và IP. Chuỗi kích thước segment có thể dùng để đoán phim; padding là tùy chọn (mục 3.6).
+Kênh Noise (mục 9) che nội dung, danh tính thiết bị và loại dịch vụ; padding và gộp request (mục 9.3) làm khó việc đoán phim qua kích thước segment. Người quan sát vẫn thấy:
+
+- Địa chỉ IP hai đầu và thời điểm kết nối.
+- Tổng lưu lượng theo thời gian: đoán được có người đang xem video hay đang gọi voice, nhưng không đoán được phim.
+- Ở voice P2P (tier 1), IP của các thành viên lộ cho nhau.
+- Khi dùng relay (mục 9.7), nhà cung cấp VPS và kẻ chiếm được VPS thấy IP, thời điểm và lưu lượng của các thiết bị.
+- Khi đường TCP đang bật, cổng TCP của server lộ là đang mở (mục 9.1).
+
+Che hoàn toàn nhịp tải cần traffic giả liên tục, tốn băng thông; đã chốt không làm ở bản đầu (mục 16).
 
 ## 14. Kế hoạch triển khai
 
@@ -720,9 +884,9 @@ Dù có TLS, người quan sát vẫn thấy thời điểm, lưu lượng, kíc
 1. **Crypto format và key store.** Chunk/segment AEAD, manifest đa variant, versioning, nonce, AAD, test vectors; KEK, Argon2id, mở khóa.
 2. **Import và local playback.** Media worker import file, mã hóa original; client phát qua AVIOContext, seek trên file hàng chục GB.
 3. **Hồ sơ năng lực và transcode.** Planner chọn bậc mục tiêu; NVENC/NVDEC, tone-map HDR sang SDR, CMAF keyframe căn hàng; kế hoạch phát và ABR.
-4. **Server API và lưu trữ.** Tách `media_api` / `media_worker`, upload/download, resume, ACL.
-5. **Thiết bị và chia sẻ.** Đăng ký có admin duyệt, envelope, chia sẻ gia đình/khách, thu hồi.
-6. **Remote access.** HTTPS, WebSocket, xác thực, rate limit, kiểm thử bảo mật mạng.
+4. **Server API và lưu trữ.** Tách `media_api` / `media_worker`, kênh Noise và RPC, upload/download, resume, ACL.
+5. **Thiết bị và chia sẻ.** Ghép bằng QR/token có admin duyệt, envelope, chia sẻ gia đình/khách, thu hồi.
+6. **Remote access.** Mở cổng NAT, IPv6, relay tự host khi CGNAT, padding, rate limit, kiểm thử bảo mật mạng.
 7. **Watch Party cơ bản.** Kênh control/presence, đồng bộ phát đa variant, chat, reaction, pause\_request.
 8. **Voice và tier.** Mesh, SFU, MLS và SFrame cho phòng riêng tư, AEC/ducking, tier và ngân sách băng thông, chuyển tier.
 9. **Android.** Tái dùng core C++ qua JNI, MediaCodec, UI riêng.
@@ -791,6 +955,17 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 - [x] Đã chốt: không tự xóa; đề xuất dọn sau 90 ngày không ai cần và không ai phát, admin duyệt; giữ vĩnh viễn original và 720p SDR (mục 5.3).
 - [ ] Đề xuất Dolby Vision profile 5: áp RPU bằng libplacebo để ra HDR10 và SDR (mục 5.5); cần thử màu trên phim mẫu.
 
+**Kênh truyền**
+
+- [x] Đã chốt: chỉ có native app, không có web client.
+- [x] Đã chốt: kênh Noise thay TLS; ghép thiết bị bằng QR/token do admin cấp, so mã xác nhận rồi duyệt (mục 9).
+- [x] Đã chốt: hỗ trợ cả UDP (đường chính) và TCP (dự phòng) dưới Noise (mục 9.1).
+- [x] Đã chốt: không che nhịp tải bằng traffic giả ở bản đầu (mục 9.3).
+- [x] Đã chốt: truy cập từ xa ưu tiên mở cổng NAT (PCP, NAT-PMP, UPnP IGD, hoặc port forward tay); mã ghép chứa danh sách IP:Port (mục 9.5, 9.6).
+- [ ] Bậc padding và chi phí băng thông (chờ B2).
+- [x] Đã chốt: xử lý CGNAT theo ba bậc: IPv6 trực tiếp, xin IPv4 công cộng, relay tự host trên VPS có đục lỗ NAT (mục 9.7).
+- [x] Đã chốt: SCTP (usrsctp) trên Noise cho đường UDP, KCP dự phòng (mục 9.8); benchmark B5 xác nhận thông số và có thể đổi sang phương án dự phòng.
+
 **Thư viện**
 
 - [x] Đã chốt: không tra cứu bên ngoài; admin nhập metadata từ client app.
@@ -807,6 +982,7 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 **Dự án**
 
 - [x] Đã chốt: giấy phép MIT; FFmpeg dùng bản LGPL link động, không kèm thành phần GPL hay nonfree (mục 12).
+- [x] Đã chốt: được dùng thư viện bên ngoài thay vì tự viết, miễn là giấy phép cho phép phân phối cùng dự án MIT: MIT, BSD, ISC, zlib, Apache-2.0, Boost, public domain dùng tự do; LGPL chỉ khi link động; MPL-2.0 chỉ khi không sửa file của thư viện, hoặc công khai phần sửa. Không dùng GPL, AGPL hay giấy phép nonfree.
 - [x] Đã chốt: stack voice nhẹ gồm libdatachannel, webrtc-audio-processing và libopus; libwebrtc là phương án dự phòng (mục 7.5).
 - [ ] Đề xuất pipeline audio: miniaudio cho output trên mọi nền tảng, WebRTC APM cho khử vọng (mục 6.4); cần prototype để xác nhận.
 

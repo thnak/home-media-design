@@ -1,4 +1,4 @@
-# media_api: tiep xuc mang (REST, WebSocket, relay, SFU). KHONG giu khoa.
+# media_api: tiep xuc mang (kenh Noise, RPC, relay, SFU). KHONG giu khoa.
 # Khong duoc link crypto_core; BoundaryCheck o CMakeLists goc se dung build neu vi pham.
 add_executable(media_api api/main.cpp)
 target_link_libraries(media_api PRIVATE hm::shared_protocol hm_compiler_options hm_avx2)

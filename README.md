@@ -4,7 +4,7 @@ Media server gia đình mã nguồn mở bằng C++20: thư viện phim được
 
 **Trạng thái:** giai đoạn benchmark. Chưa có chức năng cho người dùng; mã hiện tại gồm khung build, lõi mã hóa đơn vị và các benchmark để chốt thiết kế. Chưa khởi tạo git cho tới khi benchmark rõ ràng.
 
-Thiết kế: [docs/design-v0.2.md](docs/design-v0.2.md) (bản chụp; bản sống trên Claude Docs).
+Thiết kế: [docs/design-v0.2.md](docs/design-v0.2.md) (bản duy nhất, duy trì trong repo).
 
 ## Cấu trúc
 
@@ -14,11 +14,11 @@ home-media/
 ├── shared/           shared_protocol: định dạng wire, UnitId — không giữ khóa
 ├── crypto/           crypto_core: AEAD theo đơn vị, khóa con theo variant — giữ khóa
 ├── server/
-│   ├── api/          media_api: REST, WebSocket, relay, SFU — không giữ khóa
+│   ├── api/          media_api: kênh Noise, RPC, relay, SFU — không giữ khóa
 │   └── worker/       media_worker: import, transcode, key store — giữ khóa
 ├── client/           media_client: ứng dụng Windows
 ├── tests/            test đơn vị, chạy qua CTest
-├── bench/            benchmark B1–B4 và kết quả
+├── bench/            benchmark B1–B5 và kết quả
 └── docs/             thiết kế, định dạng mã hóa, hướng dẫn quản trị
 ```
 

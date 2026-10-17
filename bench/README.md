@@ -8,8 +8,9 @@ Các quyết định còn mở trong thiết kế (mục 16) được chốt b�
 | B2 | Bitrate từng bậc rendition, tốc độ NVENC so với thời gian thực | 5.3, 5.4.5, 5.4.6 | `transcode/run_ladder.ps1` (FFmpeg + VMAF) | Script khởi đầu |
 | B3 | Tone-map HDR sang SDR, Dolby Vision profile 5 | 5.5.1 | `tonemap_dv/run_tonemap.ps1` (FFmpeg + libplacebo) | Script khởi đầu |
 | B4 | Phát phim + thu micro + khử vọng; passthrough Atmos | 6.4, 7.6, 5.5.2 | `audio_aec/` (prototype C++) | Chưa viết |
+| B5 | SCTP (usrsctp) trên Noise có đạt thông lượng, độ trễ và công bằng không; so với KCP | 9.8 | `transport/` (prototype C++) | Chưa viết |
 
-Thứ tự đề xuất: B1 (vài phút) → B2 và B3 (cần GPU và phim mẫu) → B4 (prototype riêng).
+Thứ tự đề xuất: B1 (vài phút) → B2 và B3 (cần GPU và phim mẫu) → B4 và B5 (prototype riêng).
 
 ## Phim mẫu
 
