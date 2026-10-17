@@ -14,7 +14,7 @@ Trạng thái: bản nháp thảo luận; mã nguồn ở giai đoạn benchmark
 | Transcode | Cấm trên server | GPU server transcode (NVENC), tone-map HDR sang SDR |
 | Năng lực client | Không có | Hồ sơ năng lực thiết bị quyết định bậc rendition và luồng được gửi |
 | Video | Một file gốc, đọc theo chunk | Original + rendition đa phân giải CMAF, ABR |
-| Quản lý thư viện | Client tự import | Admin gia đình import, quản lý metadata, chia sẻ |
+| Quản lý thư viện | Client tự import | Admin gia đình import, quản lý metadata, chia sẻ; thành viên có thư viện cá nhân |
 | Watch Party | Đồng bộ play/pause/seek | Thêm chat, reaction, yêu cầu tạm dừng, voice; tối đa 15 người, 4 tier |
 | Threat model | Chống cả server | Không chống server đang chạy bị chiếm quyền hay admin; chống mọi bên còn lại |
 | Kênh truyền | TLS | Noise thay TLS, chỉ có native app, ghép thiết bị bằng QR/token do admin cấp |
@@ -29,7 +29,10 @@ Trạng thái: bản nháp thảo luận; mã nguồn ở giai đoạn benchmark
 - Server transcode bằng GPU ra nhiều bậc phân giải, tone-map HDR sang SDR, dựa trên năng lực thực tế của các thiết bị.
 - Mỗi thiết bị chỉ nhận luồng nó decode và hiển thị được; ví dụ thiết bị 720p SDR không bao giờ nhận luồng gốc HDR.
 - Client Windows native trước, Android sau. Mọi client là native app; không có web client.
-- Người dùng gia đình và khách được mời, chia sẻ theo từng asset.
+- Người dùng gia đình và khách được mời, chia sẻ theo từng asset, theo chính sách chia sẻ do admin đặt (mục 4.9).
+- Xem riêng trên từng thiết bị, ngoài Watch Party; vị trí xem tiếp và lịch sử xem của từng người là riêng của người đó.
+- Thành viên được admin cho phép upload phim vào thư viện cá nhân, có hạn mức dung lượng (mục 4.8).
+- Metric và công cụ chẩn đoán cho server và client, chỉ lưu và xem trong hệ thống, không gửi ra ngoài (mục 11.4).
 - Watch Party tối đa 15 người: đồng bộ phát, chat, reaction, tạm dừng để trò chuyện, voice; chat và voice mã hóa đầu cuối ở chế độ mặc định.
 - Truy cập qua LAN và Internet với cùng một mô hình mã hóa.
 
@@ -148,7 +151,9 @@ Manifest liệt kê các variant (codec, độ phân giải, dải động SDR/H
 
 ### 3.5. Metadata
 
-Tên phim, mô tả, poster, diễn viên, lịch sử xem và đường dẫn gốc được media worker đọc để quản lý thư viện, nhưng lưu trên đĩa ở dạng mã hóa bằng khóa thư viện. Thiết bị chỉ nhận metadata của asset nó được chia sẻ.
+Tên phim, mô tả, poster, diễn viên và đường dẫn gốc của thư viện chung được media worker đọc để quản lý thư viện, nhưng lưu trên đĩa ở dạng mã hóa bằng khóa thư viện. Thiết bị chỉ nhận metadata của asset nó được chia sẻ.
+
+Lịch sử xem, vị trí xem tiếp và metadata của asset trong thư viện cá nhân mã hóa bằng khóa người dùng (mục 4.1), đồng bộ giữa các thiết bị của người đó qua server; server và admin chỉ thấy ciphertext.
 
 Thư viện không tra cứu nguồn bên ngoài. Admin nhập tên, mô tả, poster và các trường khác từ client app; server chỉ lưu và tạo thumbnail.
 
@@ -167,11 +172,18 @@ Mọi khóa nội dung trên đĩa đều được bọc bởi một khóa gốc
 ```
 Passphrase admin (Argon2id) và/hoặc TPM
 └── Server KEK (key store, chỉ media worker dùng)
-    ├── Library key: mã hóa metadata, lịch sử xem, lịch sử chat
+    ├── Library key: mã hóa metadata thư viện chung, lịch sử chat Memorize!
     └── Asset DEK (mỗi generation)
         ├── Bọc bằng KEK: cho media worker (transcode, tạo rendition mới)
         └── Envelope cho từng thiết bị được cấp quyền
+
+Khóa người dùng (mỗi người một khóa, không nằm dưới KEK)
+├── Bọc cho từng thiết bị của người đó
+├── Mã hóa lịch sử xem, vị trí xem tiếp, metadata thư viện cá nhân
+└── Bọc DEK của asset "kín" trong thư viện cá nhân (mục 4.8)
 ```
+
+Khóa người dùng được tạo trên thiết bị đầu tiên của người đó. Thiết bị mới của cùng người nhận khóa khi một thiết bị cũ còn online bọc lại cho nó, sau khi người dùng xác nhận trên thiết bị cũ; admin duyệt thiết bị (mục 9.2) nhưng không cấp được khóa này. Người dùng có thể tạo mã khôi phục riêng, giống bộ khôi phục của admin. Mất mọi thiết bị mà không có mã khôi phục thì mất lịch sử xem và các asset kín; asset cá nhân thường vẫn còn vì DEK được bọc bằng KEK.
 
 ### 4.2. Key store
 
@@ -204,8 +216,8 @@ Sự kiện điều khiển và presence ở cả hai chế độ chỉ mã hóa
 | Vai trò | Quyền đề xuất |
 | --- | --- |
 | Admin gia đình | Mở key store, import, metadata, duyệt thiết bị, chia sẻ, thu hồi, quản lý job transcode, chính sách tier, kick/mute |
-| Family | Phát asset được chia sẻ, tạo phòng |
-| Guest | Phát asset được chia sẻ cụ thể, tham gia phòng được mời |
+| Family | Phát asset được chia sẻ, tạo phòng; upload vào thư viện cá nhân và chia sẻ asset của mình khi admin cho phép (mục 4.8, 4.9) |
+| Guest | Phát asset được chia sẻ cụ thể, tham gia phòng được mời; không upload |
 | Untrusted device | Không nhận envelope, không vào phòng |
 
 Cần cả hai lớp: ACL ở server (được tải ciphertext hay không) và quyền mật mã (có envelope hay không).
@@ -222,6 +234,48 @@ Admin không cần là chuyên gia mật mã. Dự án phải đi kèm `docs/adm
 - Những việc không được làm, ví dụ xóa bộ khôi phục, hay bật tự mở khóa mà không hiểu đánh đổi.
 
 Ứng dụng admin nên nhắc các bước này đúng lúc, ví dụ yêu cầu xác nhận đã cất bộ khôi phục trước khi import phim đầu tiên.
+
+### 4.8. Thư viện cá nhân
+
+Ngoài thư viện chung do admin import, mỗi người dùng (một nhóm thiết bị cùng vai trò, mục 4.6) có thể có thư viện cá nhân. Admin bật quyền upload cho từng người, mặc định tắt, và đặt hạn mức dung lượng. Upload đi theo cùng quy trình với import (mục 5.6), chạy từ client app của người đó.
+
+Chủ asset chọn một trong hai mức riêng tư khi upload:
+
+|  | Cá nhân (mặc định) | Kín |
+| --- | --- | --- |
+| DEK bọc cho | Media worker (KEK) và thiết bị của chủ | Chỉ khóa người dùng của chủ |
+| Metadata | Mã hóa bằng khóa người dùng | Như cột bên |
+| Transcode trên server | Có, như thư viện chung | Không; chỉ phát bản original trên thiết bị decode được |
+| Chia sẻ cho người khác | Worker tạo envelope theo chính sách (mục 4.9) | Thiết bị của chủ tự bọc DEK cho thiết bị người nhận; server chỉ lưu envelope |
+| Dùng trong Watch Party | Có | Chỉ khi mọi thành viên decode được original |
+| Admin thấy qua app | ID mờ, chủ, kích thước, trạng thái | Như cột bên |
+| Server bị chiếm quyền đọc được | Có, khi worker đang giữ DEK (mục 13.2) | Không; chỉ có ciphertext |
+
+Admin không xem được tên hay nội dung asset cá nhân qua app, nhưng xóa được asset để giải phóng dung lượng hoặc khi xóa người dùng. Hạn mức tính cả original và rendition. Job transcode của thư viện cá nhân có ưu tiên thấp hơn thư viện chung trong hàng đợi (mục 5.4.5).
+
+Mức "cá nhân" chỉ che trước các người dùng khác và trước giao diện admin, không che trước admin có quyền root trên máy server, đúng mô hình tin cậy ở mục 3.1. Ai cần che cả admin thì dùng mức "kín" và chịu mất transcode.
+
+### 4.9. Chính sách chia sẻ
+
+Mỗi lần chia sẻ là một bản ghi ACL trên server, kèm envelope DEK cho từng thiết bị nhận. Server luôn kiểm tra ACL trước khi trả ciphertext, kể cả khi thiết bị đã có envelope.
+
+| Chia sẻ | Ai được chia sẻ | Cho ai |
+| --- | --- | --- |
+| Asset thư viện chung | Admin | Người dùng, nhóm, thiết bị cụ thể |
+| Asset cá nhân của mình | Chủ asset, khi admin cho phép | Family; Guest chỉ khi admin bật thêm |
+| Chia sẻ lại asset nhận được | Không ai, trừ admin với thư viện chung | |
+| Trong một phòng Watch Party | Host, nếu host được phép chia sẻ asset đó | Thành viên phòng, chỉ trong thời gian phòng mở |
+
+Thuộc tính của một lần chia sẻ:
+
+- **Người nhận** là người dùng hoặc thiết bị. Chia sẻ cho người dùng thì thiết bị mới của người đó cũng nhận envelope: worker tạo nếu key store đang mở; với asset kín thì chờ thiết bị của chủ online.
+- **Hạn dùng**, ví dụ 7 ngày cho khách. Hết hạn thì ACL chặn tải tiếp.
+- **Giới hạn bậc** tùy chọn, ví dụ khách chỉ nhận tối đa 1080p.
+- **Chia sẻ trong phòng** hết hiệu lực khi phòng đóng hoặc thành viên rời phòng.
+
+Giới hạn của mục 4.4 áp dụng: thiết bị đã nhận DEK thì không buộc quên được. Hết hạn và thu hồi chỉ chặn ở ACL; muốn chặn hẳn thì tạo generation mới. Vì vậy chia sẻ ngắn hạn cho khách và chia sẻ trong phòng nên đi kèm giới hạn bậc, để phần đã lộ là bản chất lượng thấp hơn.
+
+Admin xem được bảng chia sẻ của thư viện chung và danh sách ai chia sẻ cho ai ở thư viện cá nhân (không có tên phim). Chủ asset xem và thu hồi được mọi chia sẻ của mình.
 
 ## 5. Năng lực client, transcode và import
 
@@ -476,6 +530,8 @@ Server giữ track Atmos gốc thành một variant audio sao chép nguyên (kh�
 Tên "Dolby Vision" và "Dolby Atmos" là thương hiệu; dự án không quảng bá là được chứng nhận Dolby, chỉ mô tả là nhận diện và chuyển đổi các định dạng này.
 
 ### 5.6. Import
+
+Quy trình dưới đây là của admin với thư viện chung. Upload vào thư viện cá nhân (mục 4.8) giống vậy, chỉ khác người upload, khóa bọc metadata, và ở mức kín thì DEK không bọc cho worker: client tự phân tích sâu ở bước 4, server chỉ kiểm tra đủ chunk, và bỏ bước 5.
 
 1. Admin chọn file trên client app; mọi việc tải lên đều đi từ đây.
 2. Client app phân tích nhanh file và cho admin nhập metadata (tên, mô tả, poster, diễn viên).
@@ -834,8 +890,14 @@ Mọi lệnh chạy dưới dạng RPC nhị phân trên kênh Noise (mục 9.1)
 | `GET /v1/assets/{id}/manifest` | Lấy manifest mã hóa |
 | `GET /v1/assets/{id}/variants/{vid}/units/{index}` | Tải chunk hoặc segment |
 | `GET /v1/assets/{id}/key-envelope` | Lấy envelope DEK của thiết bị này |
-| `POST /v1/assets/{id}/shares` | Admin chia sẻ asset cho thiết bị hoặc người dùng |
+| `POST /v1/assets/{id}/shares` | Chia sẻ asset cho thiết bị hoặc người dùng, theo chính sách (mục 4.9) |
+| `DELETE /v1/assets/{id}/shares/{sid}` | Thu hồi một lần chia sẻ |
+| `POST /v1/users/{id}/library/imports` | Tạo phiên upload vào thư viện cá nhân (mục 4.8) |
+| `PUT /v1/users/{id}/quota` | Admin đặt quyền upload và hạn mức |
+| `GET /v1/users/me/state` | Lấy lịch sử xem, vị trí xem tiếp (mã hóa bằng khóa người dùng) |
 | `GET /v1/transcode/jobs` | Admin xem hàng đợi và log job |
+| `GET /v1/diagnostics/metrics` | Admin xem metric hiện tại và lịch sử (mục 11.4) |
+| `POST /v1/diagnostics/client-report` | Client gửi tóm tắt sức khỏe phát |
 | `POST /v1/rooms` | Tạo phòng |
 | `POST /v1/rooms/{id}/members` | Thêm, bớt, kick thành viên |
 | `GET /v1/rooms/{id}/policy` | Lấy tier hiện tại và giới hạn |
@@ -872,7 +934,8 @@ home-media/
 ├── relay/              # media_relay: chuyển tiếp và đục lỗ NAT trên VPS
 ├── shared/
 │   ├── protocol/  serialization/  errors/  types/
-│   └── transport/      # Noise, SCTP trên UDP, ghép kênh trên TCP
+│   ├── transport/      # Noise, SCTP trên UDP, ghép kênh trên TCP
+│   └── metrics/        # registry metric, log có cấu trúc (mục 11.4)
 ├── tests/
 │   ├── unit/  integration/  security/  fuzz/  interop/
 └── docs/
@@ -890,7 +953,8 @@ Target đề xuất:
 | `media_worker` | Có | Giao tiếp với `media_api` qua IPC cục bộ có xác thực |
 | `media_client` | Có | Ứng dụng Windows, sau này Android |
 | `media_relay` | Không | Chạy trên VPS khi server sau CGNAT (mục 9.7); không phụ thuộc bắc cầu vào `crypto_core` |
-| `hal_core` | Không | CPU, bộ nhớ; mọi tiến trình được link |
+| `hal_core` | Không | CPU, bộ nhớ, đọc tải GPU; mọi tiến trình được link |
+| `hm_metrics` | Không | Metric và log có cấu trúc; mọi tiến trình được link |
 | `hal_media` | Có | Video, hiển thị, âm thanh; xử lý khung plaintext; chỉ worker và client |
 | `hal_keyvault` | Có | TPM, Android Keystore; chỉ worker và client |
 
@@ -960,6 +1024,7 @@ HAL không bọc lại FFmpeg. FFmpeg đã có lớp trừu tượng thiết b�
 | Decode video (server) | `hal::VideoDecoder` | NVDEC, CPU | Quick Sync, VAAPI | Worker |
 | Encode video | `hal::VideoEncoder` | NVENC; CPU: OpenH264, Kvazaar, SVT-AV1 | Quick Sync, AMF | Worker |
 | Xử lý khung | `hal::FrameProcessor` | CUDA (`scale_cuda`), Vulkan (libplacebo), CPU (`zscale`) | Quick Sync VPP, VAAPI | Worker |
+| Theo dõi GPU | `hal::GpuMonitor` | Bộ đếm PDH "GPU Engine" (Windows), NVML nạp động | Level Zero Sysman, ADLX, sysfs DRM | Mọi tiến trình (mục 11.4) |
 | Thiết bị GPU | `hal::GpuDevice` | CUDA ↔ Vulkan dùng chung bộ nhớ (external memory) | | Worker, client |
 | Decode video (client) | `hal::PlaybackDecoder` | D3D11VA chia sẻ texture sang Vulkan, phần mềm | Vulkan Video, MediaCodec | Client |
 | Hiển thị | `hal::Display` | DXGI + swapchain Vulkan | Android Display | Client |
@@ -987,6 +1052,58 @@ Encoder phần mềm phổ biến nhất (x264, x265) là GPL nên không dùng 
 | AV1 | SVT-AV1 | BSD-3 kèm cấp quyền sáng chế AOM | Đã có trong thiết kế (mục 5.3) |
 
 Bitrate và chất lượng của backend CPU đo bằng B2 như với NVENC.
+
+### 11.4. Metric và chẩn đoán
+
+Admin cần biết vì sao một thiết bị bị giật, vì sao job transcode chậm hay vì sao kết nối từ xa phải qua relay, mà không lộ ai xem phim gì.
+
+#### 11.4.1. Nguyên tắc
+
+- **Không gửi ra ngoài.** Không có telemetry gửi về dự án hay bên thứ ba. Metric chỉ nằm trên server và client của gia đình.
+- **Nhãn là enum, không là chuỗi tự do.** Registry chỉ nhận nhãn thuộc kiểu enum định nghĩa lúc biên dịch (backend, bậc, loại lỗi, đường truyền) và ID mờ của thiết bị hoặc GPU. Không có cách gắn tên phim, đường dẫn hay Asset ID vào metric; review chỉ cần xem danh sách enum.
+- **Không theo từng asset.** Metric phát ghi theo thiết bị và bậc (ví dụ `1080p-hevc`), không theo asset, để không thành lịch sử xem thứ hai.
+- **Rẻ.** Counter và gauge là biến nguyên tử, histogram có bucket cố định. Mục tiêu dưới 1% CPU, đo bằng benchmark.
+- **Không cần khóa.** `hm_metrics` không phụ thuộc target giữ khóa; worker đẩy ảnh chụp metric sang `media_api` qua IPC như các lệnh khác (mục 11).
+
+#### 11.4.2. Thu thập và lưu
+
+- Mỗi tiến trình có registry riêng. `media_api` gom metric của chính nó, của worker và báo cáo từ client.
+- Dữ liệu gần đây nằm trong RAM của `media_api`: độ phân giải 10 giây trong 24 giờ.
+- Lịch sử dài hơn (5 phút trong 30 ngày) ghi xuống đĩa, mã hóa kiểu sealed box tới khóa công khai của worker: `media_api` ghi được nhưng không đọc lại được, đúng yêu cầu mọi dữ liệu trên đĩa là ciphertext. Admin đọc lịch sử qua worker.
+- Log có cấu trúc dùng cùng quy tắc nhãn và ID mờ, có correlation ID theo request, job và phiên phát.
+- Client gửi tóm tắt sức khỏe phát mỗi phiên (số lần buffer, khung rớt, lỗi decode, backend đang dùng), không kèm asset. Người dùng tắt được trong cài đặt; mặc định bật.
+
+#### 11.4.3. Danh sách metric ban đầu
+
+| Nhóm | Phía | Metric |
+| --- | --- | --- |
+| Kênh truyền | Server, client | Bắt tay thành công và thất bại theo lý do, gói bị bỏ im lặng, cookie DoS; số phiên theo đường UDP, TCP, relay; RTT, tỷ lệ mất gói, retransmit SCTP; byte padding |
+| NAT | Server | Cách mở cổng đang dùng (PCP, NAT-PMP, UPnP, tay), mất ánh xạ, đổi IP công cộng, tỷ lệ đục lỗ thành công qua relay |
+| Transcode | Server | Độ dài hàng đợi theo ưu tiên, thời gian job, fps encode; theo từng GPU: tải encoder, decoder, 3D, VRAM, nhiệt độ, số phiên NVENC; số lần lùi sang backend khác hoặc CPU |
+| Lưu trữ | Server | Dung lượng trống, hạn mức đã dùng theo người dùng, độ trễ đọc đơn vị; **số đơn vị xác thực AEAD thất bại** |
+| Key store | Server | Khóa hay mở, số lần mở khóa thất bại, `mlock` và large page có hoạt động không |
+| Phòng | Server | Số phòng, số thành viên, tier, số lần chuyển tier, số lần chặn tham gia, bitrate SFU vào và ra |
+| Phát | Client | Thời gian bắt đầu phát, độ trễ seek, số lần và tổng thời gian buffer, chuyển bậc ABR, khung rớt, lỗi decode, backend decode, lệch A/V |
+| Watch Party | Client | Lệch so với host, số lần seek hiệu chỉnh |
+| Voice | Client | Jitter, mất gói, độ trễ đầu cuối, hiệu quả khử vọng (ERLE) |
+| Hệ thống | Cả hai | CPU, RAM, kết quả dò HAL, phiên bản app, driver |
+
+Tải GPU đọc qua HAL: bộ đếm "GPU Engine" của Windows (PDH) dùng được cho mọi hãng; khi cần chi tiết thì nạp động NVML (NVIDIA), Level Zero Sysman (Intel), ADLX (AMD) lúc chạy, không link tĩnh.
+
+#### 11.4.4. Cảnh báo và gói chẩn đoán
+
+App admin có màn hình "Chẩn đoán" và đưa cảnh báo khi:
+
+- Có đơn vị xác thực AEAD thất bại: đĩa hỏng hoặc dữ liệu bị sửa (mục 13.1).
+- Dung lượng hoặc hạn mức sắp hết.
+- Backend GPU bị đánh dấu suy giảm, job lùi sang CPU.
+- Server khởi động lại và key store đang khóa.
+- Kết nối từ xa đang đi qua relay, hoặc ánh xạ cổng bị mất.
+- Một thiết bị buffer nhiều lần liên tiếp; app gợi ý nguyên nhân (băng thông, decode, bậc chưa có).
+
+Gói chẩn đoán là file do client hoặc admin tạo để đính kèm vào issue (ví dụ mẫu "Báo cáo phần cứng"): ảnh chụp metric, log gần đây, hồ sơ năng lực, kết quả dò HAL, phiên bản và cấu hình. Gói không chứa khóa, tên phim hay Asset ID; IP và endpoint được che mặc định. Người tạo xem được nội dung trước khi gửi.
+
+Người dùng Prometheus hoặc Grafana có thể bật endpoint OpenMetrics, mặc định tắt và chỉ nghe trên loopback, vì nó nằm ngoài kênh Noise.
 
 ## 12. Công nghệ đề xuất
 
@@ -1044,7 +1161,8 @@ Mục tiêu: không ai ngoài admin, server đang chạy và thiết bị đư�
 ### 13.2. Ngoài phạm vi bảo vệ
 
 - Máy server đang chạy bị chiếm quyền root/admin: kẻ tấn công có thể đọc khóa trong RAM của worker.
-- Admin gia đình, với media và metadata. Admin không đọc được chat/voice của phòng riêng tư.
+- Admin gia đình, với media và metadata của thư viện chung và asset ở mức "cá nhân". Admin không đọc được chat/voice của phòng riêng tư, lịch sử xem của người khác, và asset mức kín (mục 4.8); admin vẫn thấy kích thước, thời điểm upload và ai chia sẻ cho ai.
+- Metric cho admin biết thiết bị nào đang phát, lúc nào và ở bậc nào, nhưng không biết phim nào (mục 11.4).
 - Thiết bị được cấp quyền bị malware kiểm soát; quay màn hình, ghi âm, chia sẻ lại.
 - Máy của admin, nơi giữ file nguồn plaintext trước và sau khi upload.
 
@@ -1078,8 +1196,8 @@ Che hoàn toàn nhịp tải cần traffic giả liên tục, tốn băng thông
 1. **Crypto format và key store.** Chunk/segment AEAD, manifest đa variant, versioning, nonce, AAD, test vectors; KEK, Argon2id, mở khóa.
 2. **Import và local playback.** Media worker import file, mã hóa original; client phát qua AVIOContext, seek trên file hàng chục GB.
 3. **Hồ sơ năng lực và transcode.** HAL cho CPU, video và hiển thị, sinh hồ sơ năng lực từ kết quả dò; planner chọn bậc mục tiêu; NVENC/NVDEC, tone-map HDR sang SDR, CMAF keyframe căn hàng; kế hoạch phát và ABR.
-4. **Server API và lưu trữ.** Tách `media_api` / `media_worker`, kênh Noise và RPC, upload/download, resume, ACL.
-5. **Thiết bị và chia sẻ.** Ghép bằng QR/token có admin duyệt, envelope, chia sẻ gia đình/khách, thu hồi.
+4. **Server API và lưu trữ.** Tách `media_api` / `media_worker`, kênh Noise và RPC, upload/download, resume, ACL; `hm_metrics` và màn hình chẩn đoán cơ bản.
+5. **Thiết bị và chia sẻ.** Ghép bằng QR/token có admin duyệt, envelope, khóa người dùng, chính sách chia sẻ, thư viện cá nhân và hạn mức, thu hồi.
 6. **Remote access.** Mở cổng NAT, IPv6, relay tự host khi CGNAT, padding, rate limit, kiểm thử bảo mật mạng.
 7. **Watch Party cơ bản.** Kênh control/presence, đồng bộ phát đa variant, chat, reaction, pause\_request.
 8. **Voice và tier.** Mesh, SFU, MLS và SFrame cho phòng riêng tư, AEC/ducking, tier và ngân sách băng thông, chuyển tier.
@@ -1113,6 +1231,16 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 
 - [ ] Guest chỉ truy cập asset và phòng được chia sẻ.
 - [ ] Thu hồi chặn truy cập mới, trong giới hạn dữ liệu đã nhận.
+- [ ] Chia sẻ hết hạn, chia sẻ trong phòng sau khi phòng đóng, và chia sẻ lại asset nhận được đều bị ACL chặn.
+- [ ] Người dùng khác và app admin không đọc được tên, metadata hay lịch sử xem của thư viện cá nhân.
+- [ ] Asset kín: đĩa server và bộ nhớ worker không bao giờ có DEK của nó.
+- [ ] Upload vượt hạn mức bị từ chối trước khi tốn băng thông.
+
+**Chẩn đoán**
+
+- [ ] Không metric hay dòng log nào chứa tên phim, đường dẫn hay Asset ID (kiểm thử quét log và gói chẩn đoán).
+- [ ] Không có kết nối ra ngoài nào ngoài các endpoint do admin cấu hình (relay, mở cổng).
+- [ ] Đơn vị bị sửa trên đĩa sinh cảnh báo trong app admin.
 
 **Watch Party**
 
@@ -1174,7 +1302,17 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 **Thư viện**
 
 - [x] Đã chốt: không tra cứu bên ngoài; admin nhập metadata từ client app.
-- [x] Đã chốt: mọi upload đi từ client app, file được mã hóa trước khi rời máy admin.
+- [x] Đã chốt: mọi upload đi từ client app, file được mã hóa trước khi rời máy của người upload.
+- [x] Đã chốt: hỗ trợ xem riêng, thư viện cá nhân do thành viên upload, và chính sách chia sẻ do admin đặt.
+- [x] Đã chốt: thư viện cá nhân có hai mức, "cá nhân" (server transcode được) và "kín" (DEK chỉ bọc bằng khóa người dùng, không transcode) (mục 4.8).
+- [x] Đã chốt: khóa người dùng tách khỏi KEK, cho lịch sử xem và thư viện cá nhân; mất mọi thiết bị mà không có mã khôi phục thì mất dữ liệu kín (mục 4.1).
+- [x] Đã chốt mặc định chính sách chia sẻ: quyền upload tắt, Family chia sẻ asset cá nhân cho Family, Guest cần admin bật; không chia sẻ lại; khách có hạn dùng và giới hạn bậc (mục 4.9).
+
+**Chẩn đoán**
+
+- [x] Đã chốt: có metric và chẩn đoán cho server và client, không gửi ra ngoài hệ thống.
+- [x] Đã chốt: tự viết registry nhỏ với nhãn kiểu enum thay vì dùng opentelemetry-cpp (Apache-2.0) hay prometheus-cpp (MIT), vì cần chặn nhãn chuỗi tự do và đi qua RPC sẵn có (mục 11.4).
+- [x] Đã chốt: client mặc định gửi tóm tắt sức khỏe phát không kèm asset; người dùng tắt được.
 
 **Watch Party**
 
