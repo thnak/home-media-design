@@ -59,7 +59,7 @@ Xem [bench/README.md](bench/README.md). Bắt đầu bằng B1:
 
 ## Đóng góp
 
-Dự án cần người thử trên phần cứng khác nhau (GPU NVIDIA Turing, Intel Quick Sync, AMD, màn hình HDR, receiver Atmos, Linux). Xem [CONTRIBUTING.md](CONTRIBUTING.md) và [docs/hardware-matrix.md](docs/hardware-matrix.md). Báo lỗ hổng bảo mật theo [SECURITY.md](SECURITY.md).
+Dự án cần người thử trên phần cứng khác nhau (GPU NVIDIA Turing, Intel Quick Sync, AMD, màn hình HDR, receiver Atmos, Linux). Xem [CONTRIBUTING.md](CONTRIBUTING.md), [docs/hardware-matrix.md](docs/hardware-matrix.md) và danh sách thiết bị đã kiểm chứng [docs/verified-devices.csv](docs/verified-devices.csv). Báo lỗ hổng bảo mật theo [SECURITY.md](SECURITY.md).
 
 ## Giấy phép
 

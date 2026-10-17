@@ -1,5 +1,5 @@
 name: Báo cáo phần cứng
-description: Gửi kết quả benchmark hoặc kiểm thử trên phần cứng của bạn (docs/hardware-matrix.md)
+description: Gửi kết quả benchmark hoặc kiểm thử trên phần cứng của bạn, làm bằng chứng cho docs/verified-devices.csv
 title: "[Phần cứng] <GPU/thiết bị> — <B1/B2/B3/B4/B5>"
 labels: ["hardware-report"]
 body:
@@ -20,6 +20,13 @@ body:
         - B5 — truyền tải UDP
         - Kiểm thử đơn vị (ctest)
         - Khác (ghi ở phần ghi chú)
+    validations:
+      required: true
+  - type: input
+    id: class_id
+    attributes:
+      label: Loại phần cứng (class_id trong docs/hardware-matrix.md)
+      placeholder: "gpu-nv-turing"
     validations:
       required: true
   - type: input
@@ -77,4 +84,4 @@ body:
     attributes:
       label: Giữ máy thử
       options:
-        - label: Tôi có thể chạy lại kiểm thử trên máy này trước các bản phát hành (sẽ được ghi vào bảng máy thử).
+        - label: Tôi có thể chạy lại kiểm thử trên máy này trước các bản phát hành (retest = yes khi thêm dòng vào docs/verified-devices.csv).

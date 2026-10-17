@@ -2,7 +2,7 @@
 
 Cảm ơn bạn quan tâm. Dự án đang ở giai đoạn thiết kế và benchmark, và có ít phần cứng để thử, nên các đóng góp hữu ích nhất hiện nay là:
 
-1. **Chạy benchmark trên phần cứng bạn có**, đặc biệt các dòng đang "Cần người thử" trong [docs/hardware-matrix.md](docs/hardware-matrix.md): GPU NVIDIA Turing, Intel Quick Sync, AMD RDNA3, màn hình HDR, receiver Atmos, Linux.
+1. **Kiểm chứng phần cứng bạn có**, đặc biệt các loại ưu tiên cao trong [docs/hardware-matrix.md](docs/hardware-matrix.md): GPU NVIDIA Turing, Intel Quick Sync, server nhiều GPU, màn hình HDR, Linux. Kết quả được ghi vào [docs/verified-devices.csv](docs/verified-devices.csv) bằng PR.
 2. **Góp ý thiết kế**: đọc [docs/design-v0.2.md](docs/design-v0.2.md), nhất là các mục còn mở ở mục 16.
 3. **Viết mã** cho các phần đã chốt thiết kế: định dạng mã hóa, HAL, kênh truyền.
 
@@ -47,7 +47,7 @@ Ví dụ backend Intel Quick Sync hay AMD AMF (thiết kế mục 11.3). Một b
 2. Không làm thay đổi hành vi của các backend khác khi phần cứng của nó không có mặt.
 3. Qua bộ kiểm thử tuân thủ chung của miền: decode và encode phim mẫu chuẩn, keyframe đúng timeline segment (mục 5.4.2), VMAF đạt ngưỡng của bậc.
 4. Có kết quả B2 (và B3 nếu backend làm tone-map) trên ít nhất một máy, đính kèm trong PR.
-5. Có một người nhận giữ máy thử, ghi trong `docs/hardware-matrix.md`. Không có máy thử thì backend vẫn được nhận nhưng ở mức "dự kiến".
+5. Có ít nhất một dòng `pass` với `retest` là `yes` trong `docs/verified-devices.csv` cho loại phần cứng của backend. Chưa có thì backend vẫn được nhận nhưng ở mức "dự kiến".
 
 ## Phong cách mã
 
