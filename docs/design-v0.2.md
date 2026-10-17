@@ -876,6 +876,8 @@ Quyền large page cần bật khi cài đặt; hướng dẫn quản trị (m�
 
 Ba mức: **chính thức** (có máy thử, chạy benchmark và kiểm thử trước mỗi bản phát hành), **dự kiến** (interface HAL đã chừa chỗ, chưa có backend), và **không hỗ trợ**. Mọi máy thiếu phần cứng tăng tốc vẫn chạy được bằng backend phần mềm, chỉ chậm hơn.
 
+Dự án có ít máy thử, nên danh sách máy thử thực tế và người giữ máy nằm ở `docs/hardware-matrix.md`. Một dòng "chính thức" dưới đây chỉ có hiệu lực khi bảng đó có ít nhất một máy thử thuộc dòng ấy; nếu không, dòng đó tạm coi là "dự kiến" cho tới khi có người đóng góp máy thử.
+
 **Server**
 
 | Thành phần | Chính thức | Dự kiến | Không hỗ trợ | Ghi chú |
@@ -928,6 +930,7 @@ HAL không bọc lại FFmpeg. FFmpeg đã có lớp trừu tượng thiết b�
 - **Dò rồi mới dùng.** Mỗi backend có `probe()` trả về cấu trúc năng lực, hoặc lý do không dùng được (thiếu driver, driver cũ, hết phiên). Kết quả dò ghi vào log để admin xem.
 - **Thứ tự ưu tiên có cấu hình.** Mặc định: phần cứng trước, phần mềm sau. Admin bật, tắt hoặc ép một backend được, ví dụ tắt NVENC để nhường GPU cho việc khác.
 - **Lùi khi lỗi lúc chạy.** Backend lỗi (mục 5.4.7) bị đánh dấu suy giảm; bộ lập lịch chuyển các nhánh sang backend kế tiếp và báo admin. Sau một thời gian, backend được dò lại.
+- **Máy nhiều GPU.** Laptop đồ họa lai và server có cả iGPU lẫn GPU rời phải dò từng adapter (DXGI `EnumAdapterByGpuPreference` trên Windows, từng thiết bị DRM trên Linux) và chọn rõ ràng: transcode ưu tiên GPU rời, client decode và hiển thị trên cùng adapter với màn hình để tránh chép khung qua lại. Admin chỉ định được adapter cho từng miền.
 - **Một variant, một cấu hình encoder.** Segment của cùng một variant chỉ ghép được với nhau khi do cùng backend và cùng tham số encoder tạo ra, trừ khi parameter set nằm trong từng segment (mục 5.4.2). Manifest ghi lại backend và tham số của từng variant; đổi backend giữa chừng nghĩa là tạo variant mới.
 - **Ranh giới khóa.** Backend xử lý khung plaintext hoặc khóa nằm trong target giữ khóa, chỉ worker và client được link. `media_api` chỉ link phần CPU và bộ nhớ (mục 11, kiểm tra bằng BoundaryCheck).
 - **Kiểm thử.** Mỗi backend chạy cùng một bộ kiểm thử tuân thủ: decode và encode phim mẫu, kiểm tra keyframe đúng timeline segment, so VMAF với ngưỡng. CI không có GPU chạy backend phần mềm và một backend giả lập; backend phần cứng chạy trên máy thử trước khi phát hành.
@@ -1120,7 +1123,8 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 
 - [x] Đã chốt: server chỉ hỗ trợ x86-64 có AVX2 trở lên; GPU NVIDIA từ Turing trở lên (mục 11.2).
 - [x] Đã chốt: thứ tự backend GPU: NVIDIA, rồi Intel Quick Sync, rồi AMD.
-- [ ] Đề xuất: client và server Windows chỉ hỗ trợ Windows 11.
+- [x] Đã chốt: client và server Windows chỉ hỗ trợ Windows 11.
+- [x] Đã chốt: phần cứng chỉ được ghi là hỗ trợ chính thức khi có ít nhất một người thử trong `docs/hardware-matrix.md`; người đóng góp bổ sung máy thử theo `CONTRIBUTING.md`.
 - [x] Đã chốt: đường decode chính ở client là D3D11VA chia sẻ texture sang Vulkan, vì ổn định trên mọi driver; Vulkan Video chỉ xem lại khi đo được độ ổn định của driver.
 - [ ] Encoder CPU: OpenH264 và Kvazaar có đạt chất lượng chấp nhận được không (B2).
 

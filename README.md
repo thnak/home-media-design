@@ -57,6 +57,10 @@ Xem [bench/README.md](bench/README.md). Bắt đầu bằng B1:
 .\build\windows-release\bench\bench_crypto_chunk.exe 4096
 ```
 
+## Đóng góp
+
+Dự án cần người thử trên phần cứng khác nhau (GPU NVIDIA Turing, Intel Quick Sync, AMD, màn hình HDR, receiver Atmos, Linux). Xem [CONTRIBUTING.md](CONTRIBUTING.md) và [docs/hardware-matrix.md](docs/hardware-matrix.md). Báo lỗ hổng bảo mật theo [SECURITY.md](SECURITY.md).
+
 ## Giấy phép
 
 MIT. Phụ thuộc phải tương thích khi phân phối: FFmpeg dùng bản LGPL link động, không kèm thành phần GPL hay nonfree (thiết kế mục 12).
