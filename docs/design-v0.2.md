@@ -1318,7 +1318,7 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 - [x] Đã chốt: mọi upload đi từ client app, file được mã hóa trước khi rời máy của người upload.
 - [x] Đã chốt: hỗ trợ xem riêng, thư viện cá nhân do thành viên upload, và chính sách chia sẻ do admin đặt.
 - [x] Đã chốt: thư viện cá nhân có hai mức, "cá nhân" (server transcode được) và "kín" (DEK chỉ bọc bằng khóa người dùng, không transcode) (mục 4.8).
-- [ ] Đề xuất: xem riêng luôn có lựa chọn "Gốc", mặc định chọn khi mạng và decode đủ, hạ bậc tự động; quota và bậc tối đa của admin không chặn người sở hữu tải Gốc của file mình; UI không ghi "Dolby Vision" khi chỉ phát lớp nền (mục 5.5.4).
+- [x] Đã chốt: xem riêng luôn có lựa chọn "Gốc", mặc định chọn khi mạng và decode đủ, hạ bậc tự động; quota và bậc tối đa của admin không chặn người sở hữu tải Gốc của file mình; UI không ghi "Dolby Vision" khi chỉ phát lớp nền (mục 5.5.4).
 - [x] Đã chốt: khóa người dùng tách khỏi KEK, cho lịch sử xem và thư viện cá nhân; mất mọi thiết bị mà không có mã khôi phục thì mất dữ liệu kín (mục 4.1).
 - [x] Đã chốt mặc định chính sách chia sẻ: quyền upload tắt, Family chia sẻ asset cá nhân cho Family, Guest cần admin bật; không chia sẻ lại; khách có hạn dùng và giới hạn bậc (mục 4.9).
 
