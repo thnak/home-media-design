@@ -95,4 +95,25 @@ Kết quả giữa các máy chỉ so được khi chạy trên cùng nguồn. B
 | SDR 4K | Tears of Steel 4K (Blender Foundation) | CC BY |
 | HDR10 2160p | Netflix Open Content (ví dụ Meridian, Sol Levante) | CC BY 4.0 |
 
-Kiểm tra lại giấy phép tại trang của từng nguồn trước khi dùng. Mẫu HLG, Dolby Vision profile 5 và 8.1, và track Atmos hiện chưa có nguồn mở phù hợp: dùng file của riêng bạn, chỉ báo kết luận và ảnh so sánh, không gửi file.
+Kiểm tra lại giấy phép tại trang của từng nguồn trước khi dùng.
+
+### Mẫu tải trực tiếp đã dùng để thử
+
+Các file dưới đây tải được bằng một đường dẫn, không cần tài khoản hay AWS CLI. Nên dùng đúng các file này để kết quả giữa các máy so được với nhau. Ghi tên file trong ô "Phim mẫu đã dùng" của issue.
+
+| Vai trò | Nguồn | File | Ghi chú |
+| --- | --- | --- | --- |
+| SDR 1080p H.264, nhiều chuyển động | [test-videos.co.uk](https://test-videos.co.uk/bigbuckbunny/mp4-h264) (Big Buck Bunny) | `Big_Buck_Bunny_1080_10s_30MB.mp4` | 10 giây, khoảng 24,5 Mbps; chỉ đủ đo tốc độ, quá ngắn để đo bitrate hay VMAF |
+| SDR 1080p H.264 / HEVC 10-bit | [Jellyfin test videos](https://repo.jellyfin.org/test-videos/) | `SDR/AVC/Test Jellyfin 1080p AVC 5M.mp4`, `SDR/HEVC 10bit/Test Jellyfin 1080p HEVC 10bit 5M.mp4` | Có file checksum `.sha256sum` cạnh mỗi file |
+| HDR10 4K HEVC | Jellyfin test videos | `HDR/HDR10/HEVC/Test Jellyfin 4K HEVC HDR10 40M.mp4` | Còn các mức 50M đến 150M và bản 1080p |
+| HDR10 AV1 | Jellyfin test videos | `HDR/HDR10/AV1/...` | Để thử decode AV1 |
+| Dolby Vision profile 5, 8.1, 8.4 | Jellyfin test videos | `HDR/Dolby Vision/Test Jellyfin 4K DV P5.mp4`, `... P8.1.mp4`, `... P8.4.mp4` | Bản 1080p và 8K cũng có; dùng cho B3 |
+
+Quy tắc dùng:
+
+- Tải file vào `bench/samples/` (đã nằm trong `.gitignore`), không đưa lên repo hay issue. Kiểm tra bằng file `.sha256sum` của nguồn Jellyfin trước khi chạy.
+- Giấy phép: trang Jellyfin ghi CC BY-SA 4.0; test-videos.co.uk ghi giấy phép riêng cho từng clip. Mẫu chỉ dùng để đo trên máy của bạn, không phân phối lại trong repo.
+- Các nguồn này có thể đổi đường dẫn hoặc ngừng phục vụ (ví dụ `download.blender.org` đã trả về 403 cho một số file Big Buck Bunny khi thử). Nếu một file mất, mở issue hoặc PR thay bằng file tương đương và ghi vào bảng.
+- Clip ngắn (10 giây) chỉ cho biết tốc độ và khả năng chạy được. Muốn đo bitrate bậc rendition và VMAF (B2), dùng phim dài hơn, ví dụ Netflix Open Content ở bảng trên.
+
+Mẫu HLG, track Atmos (E-AC-3 JOC, TrueHD) hiện chưa có nguồn mở phù hợp: dùng file của riêng bạn, chỉ báo kết luận và ảnh so sánh, không gửi file.
