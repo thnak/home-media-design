@@ -331,7 +331,7 @@ Nhánh SDR đi theo chuỗi: tone-map một lần rồi scale dần xuống, nê
 
 Ranh giới segment được tính cố định từ nguồn: segment thứ k bắt đầu ở k × độ dài GOP (ví dụ 2 giây) tính từ PTS đầu tiên. Mọi nhánh, mọi lần chạy đều ép keyframe đóng (IDR) đúng tại các mốc đó và tắt chèn keyframe theo cảnh.
 
-Nhờ vậy, segment do phiên trực tiếp sinh ra và segment dựng sẵn của cùng variant **hoán đổi được cho nhau**, và ABR đổi bậc được ở mọi ranh giới.
+Nhờ vậy, segment do phiên trực tiếp sinh ra và segment dựng sẵn của cùng variant **hoán đổi được cho nhau**, và ABR đổi bậc được ở mọi ranh giới. Căn keyframe là điều kiện cần nhưng chưa đủ: hai lần encode khác preset hoặc khác GPU cho parameter set khác nhau, nên segment còn phải mang parameter set của chính nó (mục 5.4.9).
 
 #### 5.4.3. Hai chế độ chạy
 
@@ -354,7 +354,7 @@ Khi xem trực tiếp mà người dùng seek, phiên dừng đồ thị và kh�
 
 #### 5.4.5. Hồ sơ năng lực server và bộ lập lịch
 
-Khi khởi động, server tự đo năng lực GPU và lưu thành hồ sơ, đối xứng với hồ sơ thiết bị ở mục 5.1:
+Khi khởi động, server tự đo năng lực của từng GPU và lưu thành hồ sơ, đối xứng với hồ sơ thiết bị ở mục 5.1. Server nhiều GPU có một mục hồ sơ cho mỗi GPU (mục 5.4.9):
 
 - Codec NVENC/NVDEC hỗ trợ (AV1 encode cần RTX 40 trở lên), 10-bit, B-frame.
 - Số phiên NVENC đồng thời tối đa; card GeForce bị driver giới hạn số này.
@@ -389,6 +389,47 @@ Bitrate cụ thể từng bậc chờ benchmark trên phim mẫu.
 - Tone-map cho màu và độ sáng chấp nhận được trên phim HDR10 và HLG mẫu.
 - Benchmark thông lượng trên từng dòng GPU hỗ trợ.
 - Plaintext không xuất hiện trên đĩa trong suốt quá trình (kiểm tra mục 13.3).
+
+#### 5.4.9. Server nhiều GPU
+
+Một server có thể có hai GPU trở lên, cùng hãng hoặc khác hãng, khác thế hệ, và không hoạt động đồng bộ với nhau. Ví dụ một GPU NVIDIA Turing (encode H.264, HEVC, không AV1) cạnh một Intel Arc (encode AV1), hoặc iGPU Intel cạnh GPU rời NVIDIA. Mỗi GPU có ma trận năng lực riêng; hệ thống không giả định GPU nào làm được mọi việc.
+
+**Hồ sơ theo từng GPU.** Hồ sơ năng lực server (mục 5.4.5) là danh sách, mỗi GPU một mục:
+
+| Nhóm | Trường |
+| --- | --- |
+| Định danh | Hãng, thế hệ, tên; định danh ổn định qua các API (PCI bus ID, DXGI LUID, CUDA UUID, Vulkan `deviceUUID`) |
+| Decode | Codec, profile, độ sâu màu, độ phân giải tối đa |
+| Encode | Codec, profile, 10-bit, B-frame, số phiên đồng thời tối đa |
+| Xử lý khung | Scale, khử xen kẽ, tone-map (có Vulkan và libplacebo dùng được không) |
+| Tài nguyên | VRAM, thông lượng encode đo được theo codec và độ phân giải |
+| Chính sách admin | Bật/tắt, giới hạn số phiên và VRAM, khung giờ được dùng (ví dụ GPU chơi game chỉ dùng ban đêm) |
+
+HAL cần ánh xạ một GPU vật lý qua các API khác nhau (CUDA, DXGI, Vulkan, VAAPI) về cùng một định danh, để không nhận nhầm hai GPU là một hoặc một GPU là hai (mục 11.3).
+
+**Planner dùng hợp, bộ lập lịch dùng từng GPU.**
+
+- Planner (mục 5.3) chọn bậc mục tiêu theo **hợp** năng lực của mọi GPU đang bật. Ví dụ bậc 2160p HDR dùng AV1 nếu có ít nhất một GPU encode được AV1 10-bit; nếu không có thì dùng HEVC Main10.
+- Bộ lập lịch đặt từng nhánh lên một GPU cụ thể có đủ năng lực, rồi mới xét chi phí.
+
+**Đặt đồ thị lên GPU.** Khung thô rất lớn (một khung 4K 10-bit khoảng 12 MiB), còn gói nén của nguồn rất nhỏ. Vì vậy:
+
+1. Ưu tiên đặt cả đồ thị lên **một** GPU nếu GPU đó làm được mọi nhánh cần chạy; khung nằm trong VRAM suốt quá trình.
+2. Nếu không GPU nào làm được hết, tách đồ thị thành các **đồ thị con, mỗi GPU một đồ thị con có decode riêng**. Các đồ thị con dùng chung gói nén đã demux từ cùng một `EncryptedMediaSource`, nên nguồn chỉ giải mã AEAD một lần. Decode lặp lại trên phần cứng rẻ hơn nhiều so với chép khung thô qua PCIe giữa hai GPU.
+3. Chỉ chép khung giữa hai GPU khi GPU thứ hai không decode được codec nguồn. Khi đó khung đi qua bộ nhớ ghim của host (mục 11.1), tính vào chi phí, và chỉ chọn khi không còn cách khác.
+4. Tone-map phải chạy trên cùng GPU với các nhánh SDR dùng nó, để giữ chuỗi "tone-map một lần rồi scale dần xuống" (mục 5.4.1).
+
+Ví dụ: nguồn 4K HDR10 HEVC, server có GPU A (Turing) và GPU B (Arc). Đồ thị con trên A: decode, tone-map, encode 1080p HEVC, 720p và 480p H.264. Đồ thị con trên B: decode, encode 2160p HDR AV1. Hai bên decode cùng gói nén, không chép khung qua lại.
+
+**Chi phí và ưu tiên.** Bộ lập lịch tính chi phí của từng phương án đặt (pixel mỗi giây so với thông lượng đo được của GPU đó, số phiên, VRAM, chép khung nếu có), chọn phương án rẻ nhất còn đủ biên thời gian thực (mục 5.4.5). Thứ tự ưu tiên giữa các loại job giữ nguyên. Job nền có thể bị dời sang GPU khác ở ranh giới segment khi phiên trực tiếp cần GPU đang dùng.
+
+**Segment do GPU khác nhau tạo ra.** Hai encoder khác hãng hoặc khác thế hệ cho bitstream khác nhau, nên segment của cùng một variant chỉ ghép được nếu chúng tương thích khi decode (mục 5.4.2 và 11.3.1). Đề xuất: mọi rendition mang parameter set ngay trong từng segment (`avc3`/`hev1`, lặp header ở mỗi IDR). Client là native app nên không bị giới hạn bởi trình duyệt. Khi đó, variant được định nghĩa bằng **chữ ký giải mã**: codec, profile, level, độ sâu màu, độ phân giải, metadata màu, timescale. Mọi encoder tạo được đúng chữ ký đó đều được ghi segment cho variant. Manifest ghi chữ ký của variant và encoder đã tạo từng dải segment, để truy lỗi. Cần kiểm chứng bằng B2: phát liên tục một chuỗi segment xen kẽ từ hai encoder khác hãng mà không lỗi hình.
+
+**Lỗi và thay đổi phần cứng.**
+
+- Một GPU lỗi hoặc mất (driver reset, rút ra): các nhánh của nó chuyển sang GPU khác có đủ năng lực, hoặc sang CPU, ở ranh giới segment kế tiếp (mục 5.4.7).
+- GPU mới hoặc driver mới: dò lại khi khởi động và khi nhận sự kiện thay đổi thiết bị; planner có thể tạo job cho bậc trước đây không làm được.
+- Admin tắt một GPU: job đang chạy trên đó dừng ở ranh giới segment rồi chuyển đi; không mất segment đã commit.
 
 ### 5.5. Dolby Vision và Dolby Atmos
 
@@ -876,7 +917,7 @@ Quyền large page cần bật khi cài đặt; hướng dẫn quản trị (m�
 
 Ba mức: **chính thức** (có máy thử, chạy benchmark và kiểm thử trước mỗi bản phát hành), **dự kiến** (interface HAL đã chừa chỗ, chưa có backend), và **không hỗ trợ**. Mọi máy thiếu phần cứng tăng tốc vẫn chạy được bằng backend phần mềm, chỉ chậm hơn.
 
-Dự án có ít máy thử, nên danh sách máy thử thực tế và người giữ máy nằm ở `docs/hardware-matrix.md`. Một dòng "chính thức" dưới đây chỉ có hiệu lực khi bảng đó có ít nhất một máy thử thuộc dòng ấy; nếu không, dòng đó tạm coi là "dự kiến" cho tới khi có người đóng góp máy thử.
+Dự án có ít máy thử, nên việc kiểm chứng dựa vào người đóng góp. `docs/hardware-matrix.md` liệt kê các loại phần cứng cần kiểm chứng, mỗi loại một `class_id`; `docs/verified-devices.csv` là danh sách thiết bị cụ thể đã kiểm chứng, contributor cập nhật bằng PR. Một dòng "chính thức" dưới đây chỉ có hiệu lực khi danh sách đó có thiết bị đạt cho loại tương ứng (quy tắc ở `docs/hardware-matrix.md`); nếu không, dòng đó tạm coi là "dự kiến".
 
 **Server**
 
@@ -930,7 +971,7 @@ HAL không bọc lại FFmpeg. FFmpeg đã có lớp trừu tượng thiết b�
 - **Dò rồi mới dùng.** Mỗi backend có `probe()` trả về cấu trúc năng lực, hoặc lý do không dùng được (thiếu driver, driver cũ, hết phiên). Kết quả dò ghi vào log để admin xem.
 - **Thứ tự ưu tiên có cấu hình.** Mặc định: phần cứng trước, phần mềm sau. Admin bật, tắt hoặc ép một backend được, ví dụ tắt NVENC để nhường GPU cho việc khác.
 - **Lùi khi lỗi lúc chạy.** Backend lỗi (mục 5.4.7) bị đánh dấu suy giảm; bộ lập lịch chuyển các nhánh sang backend kế tiếp và báo admin. Sau một thời gian, backend được dò lại.
-- **Máy nhiều GPU.** Laptop đồ họa lai và server có cả iGPU lẫn GPU rời phải dò từng adapter (DXGI `EnumAdapterByGpuPreference` trên Windows, từng thiết bị DRM trên Linux) và chọn rõ ràng: transcode ưu tiên GPU rời, client decode và hiển thị trên cùng adapter với màn hình để tránh chép khung qua lại. Admin chỉ định được adapter cho từng miền.
+- **Máy nhiều GPU.** Laptop đồ họa lai và server có cả iGPU lẫn GPU rời phải dò từng adapter (DXGI `EnumAdapterByGpuPreference` trên Windows, từng thiết bị DRM trên Linux) và chọn rõ ràng. Ở server, mỗi GPU là một tài nguyên riêng của bộ lập lịch (mục 5.4.9). Ở client, decode và hiển thị chạy trên cùng adapter với màn hình để tránh chép khung qua lại. Admin chỉ định được adapter cho từng miền.
 - **Một variant, một cấu hình encoder.** Segment của cùng một variant chỉ ghép được với nhau khi do cùng backend và cùng tham số encoder tạo ra, trừ khi parameter set nằm trong từng segment (mục 5.4.2). Manifest ghi lại backend và tham số của từng variant; đổi backend giữa chừng nghĩa là tạo variant mới.
 - **Ranh giới khóa.** Backend xử lý khung plaintext hoặc khóa nằm trong target giữ khóa, chỉ worker và client được link. `media_api` chỉ link phần CPU và bộ nhớ (mục 11, kiểm tra bằng BoundaryCheck).
 - **Kiểm thử.** Mỗi backend chạy cùng một bộ kiểm thử tuân thủ: decode và encode phim mẫu, kiểm tra keyframe đúng timeline segment, so VMAF với ngưỡng. CI không có GPU chạy backend phần mềm và một backend giả lập; backend phần cứng chạy trên máy thử trước khi phát hành.
@@ -1124,9 +1165,11 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 - [x] Đã chốt: server chỉ hỗ trợ x86-64 có AVX2 trở lên; GPU NVIDIA từ Turing trở lên (mục 11.2).
 - [x] Đã chốt: thứ tự backend GPU: NVIDIA, rồi Intel Quick Sync, rồi AMD.
 - [x] Đã chốt: client và server Windows chỉ hỗ trợ Windows 11.
-- [x] Đã chốt: phần cứng chỉ được ghi là hỗ trợ chính thức khi có ít nhất một người thử trong `docs/hardware-matrix.md`; người đóng góp bổ sung máy thử theo `CONTRIBUTING.md`.
+- [x] Đã chốt: phần cứng chỉ được ghi là hỗ trợ chính thức khi `docs/verified-devices.csv` có thiết bị đạt, còn sẵn sàng chạy lại, cho loại đó; contributor thêm thiết bị bằng PR theo `docs/hardware-matrix.md`.
 - [x] Đã chốt: đường decode chính ở client là D3D11VA chia sẻ texture sang Vulkan, vì ổn định trên mọi driver; Vulkan Video chỉ xem lại khi đo được độ ổn định của driver.
 - [ ] Encoder CPU: OpenH264 và Kvazaar có đạt chất lượng chấp nhận được không (B2).
+- [ ] Đề xuất cho server nhiều GPU: hồ sơ năng lực theo từng GPU; mỗi GPU một đồ thị con có decode riêng thay vì chép khung thô giữa các GPU (mục 5.4.9).
+- [ ] Đề xuất: mọi rendition mang parameter set trong từng segment, variant định nghĩa bằng chữ ký giải mã, để segment từ GPU hoặc encoder khác nhau ghép được (mục 5.4.9); cần B2 xác nhận phát xen kẽ hai encoder khác hãng.
 
 **Thư viện**
 
