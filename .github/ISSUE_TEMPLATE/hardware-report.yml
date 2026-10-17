@@ -1,0 +1,87 @@
+name: Báo cáo phần cứng
+description: Gửi kết quả benchmark hoặc kiểm thử trên phần cứng của bạn, làm bằng chứng cho docs/verified-devices.csv
+title: "[Phần cứng] <GPU/thiết bị> — <B1/B2/B3/B4/B5>"
+labels: ["hardware-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cảm ơn bạn đã thử trên máy của mình. Không đính kèm file phim; chỉ gửi file CSV kết quả, log và ảnh so sánh.
+  - type: dropdown
+    id: benchmark
+    attributes:
+      label: Benchmark hoặc kiểm thử đã chạy
+      multiple: true
+      options:
+        - B1 — mã hóa theo kích thước đơn vị
+        - B2 — bậc rendition, bitrate, VMAF
+        - B3 — tone-map HDR, Dolby Vision
+        - B4 — âm thanh, khử vọng, passthrough
+        - B5 — truyền tải UDP
+        - Kiểm thử đơn vị (ctest)
+        - Khác (ghi ở phần ghi chú)
+    validations:
+      required: true
+  - type: input
+    id: class_id
+    attributes:
+      label: Loại phần cứng (class_id trong docs/hardware-matrix.md)
+      placeholder: "gpu-nv-turing"
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU và driver
+      placeholder: "NVIDIA GeForce RTX 2060, driver 581.xx"
+    validations:
+      required: true
+  - type: input
+    id: cpu
+    attributes:
+      label: CPU và RAM
+      placeholder: "Intel Core i5-10400, 16 GiB"
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Hệ điều hành
+      placeholder: "Windows 11 24H2 / Ubuntu 24.04, kernel 6.8"
+    validations:
+      required: true
+  - type: input
+    id: ffmpeg
+    attributes:
+      label: Bản FFmpeg (dòng đầu của ffmpeg -version)
+  - type: input
+    id: commit
+    attributes:
+      label: Commit của repo đã build
+    validations:
+      required: true
+  - type: textarea
+    id: samples
+    attributes:
+      label: Phim mẫu đã dùng
+      description: Tên trong bộ mẫu chuẩn (docs/hardware-matrix.md), hoặc mô tả file riêng (codec, độ phân giải, HDR/DV profile) mà không gửi file.
+    validations:
+      required: true
+  - type: textarea
+    id: results
+    attributes:
+      label: Kết quả
+      description: Dán nội dung CSV hoặc đính kèm file; thêm ảnh so sánh nếu chạy B3.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Ghi chú
+      description: Lỗi gặp phải, tham số đã phải sửa trong script, quan sát khác.
+  - type: checkboxes
+    id: keeper
+    attributes:
+      label: Giữ máy thử
+      options:
+        - label: Tôi có thể chạy lại kiểm thử trên máy này trước các bản phát hành (retest = yes khi thêm dòng vào docs/verified-devices.csv).

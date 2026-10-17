@@ -21,7 +21,7 @@ Viết cho admin gia đình, không cần kiến thức mật mã (thiết kế 
 
 ## 4. Thiết bị
 
-- Duyệt thiết bị mới.
+- Ghép thiết bị mới: tạo QR hoặc mã ghép, so mã xác nhận trên hai màn hình rồi duyệt.
 - Thu hồi thiết bị bị mất và giới hạn của thu hồi.
 
 ## 5. Khóa
@@ -32,10 +32,17 @@ Viết cho admin gia đình, không cần kiến thức mật mã (thiết kế 
 ## 6. Tối ưu hệ thống
 
 - Bật quyền large page (Windows: SeLockMemoryPrivilege; Linux: transparent huge pages).
-- Bật kTLS trên Linux.
 - Kiểm tra trong log rằng các tối ưu đang hoạt động.
 
-## 7. Không được làm
+## 7. Truy cập từ xa
+
+- Bật UPnP hoặc NAT-PMP trên router để server tự mở cổng, hoặc port forward tay cổng UDP (và TCP nếu dùng) của server.
+- Xem trạng thái "truy cập từ xa" trong ứng dụng admin; thử bằng một thiết bị dùng mạng di động.
+- Nhận biết khi nhà mạng dùng CGNAT: mở cổng không có tác dụng. Lần lượt thử: dùng IPv6 nếu nhà mạng cấp; xin nhà mạng IP công cộng; thuê VPS nhỏ để chạy relay.
+- Cài relay lên VPS và ghép với server; khai báo băng thông của VPS.
+- Khi IP nhà đổi, thiết bị ở ngoài cần quét lại mã ghép, bật DDNS, hoặc dùng relay (IP của VPS không đổi).
+
+## 8. Không được làm
 
 - Xóa hoặc làm mất bộ khôi phục.
 - Bật tự mở khóa khi chưa hiểu đánh đổi.
