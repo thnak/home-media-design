@@ -108,12 +108,19 @@ Các file dưới đây tải được bằng một đường dẫn, không cầ
 | HDR10 4K HEVC | Jellyfin test videos | `HDR/HDR10/HEVC/Test Jellyfin 4K HEVC HDR10 40M.mp4` | Còn các mức 50M đến 150M và bản 1080p |
 | HDR10 AV1 | Jellyfin test videos | `HDR/HDR10/AV1/...` | Để thử decode AV1 |
 | Dolby Vision profile 5, 8.1, 8.4 | Jellyfin test videos | `HDR/Dolby Vision/Test Jellyfin 4K DV P5.mp4`, `... P8.1.mp4`, `... P8.4.mp4` | Bản 1080p và 8K cũng có; dùng cho B3 |
+| SDR 1080p 30 fps, phim dài (B2 VMAF) | [Blender, bản sao Clarkson](https://mirror.clarkson.edu/blender/demo/movies/BBB/) (Big Buck Bunny) | `bbb_sunflower_1080p_30fps_normal.mp4.zip` (giải nén ra `.mp4`, 276 MB) | Nguồn sạch, đủ dài để đo bitrate và VMAF; thay cho `download.blender.org` bị 403 |
+| HDR 4K 59,94 fps, P3 PQ (B3, B6) | Netflix Open Content (Meridian) | `Meridian/Meridian_UHD4k5994_HDR_P3PQ.mp4` (851 MB) | Nguồn 60 fps duy nhất trong bộ này cho B6 ở 4K; file không gắn thẻ màu (primaries, transfer, matrix đều `unknown`) nên `zscale` lỗi "no path between colorspaces"; `libplacebo` vẫn chạy (đoán thẻ màu theo mặc định), nên kiểm tra ảnh so sánh bằng mắt vì màu có thể lệch |
+| HDR 2K 24 fps, P3 PQ | Netflix Open Content (Cosmos Laundromat) | `CosmosLaundromat/CosmosLaundromat_2k24p_HDR_P3PQ.mp4` (730 MB) | Mẫu 24 fps cho thử nội suy khung và tone-map |
+| Clip không nén, để thử decode và codec | [Xiph.org test media](https://media.xiph.org/) | Nhiều clip y4m, nhỏ | Chưa dùng trong lần đo nào; ghi lại khi có |
 
 Quy tắc dùng:
 
 - Tải file vào `bench/samples/` (đã nằm trong `.gitignore`), không đưa lên repo hay issue. Kiểm tra bằng file `.sha256sum` của nguồn Jellyfin trước khi chạy.
 - Giấy phép: trang Jellyfin ghi CC BY-SA 4.0; test-videos.co.uk ghi giấy phép riêng cho từng clip. Mẫu chỉ dùng để đo trên máy của bạn, không phân phối lại trong repo.
 - Các nguồn này có thể đổi đường dẫn hoặc ngừng phục vụ (ví dụ `download.blender.org` đã trả về 403 cho một số file Big Buck Bunny khi thử). Nếu một file mất, mở issue hoặc PR thay bằng file tương đương và ghi vào bảng.
-- Clip ngắn (10 giây) chỉ cho biết tốc độ và khả năng chạy được. Muốn đo bitrate bậc rendition và VMAF (B2), dùng phim dài hơn, ví dụ Netflix Open Content ở bảng trên.
+- Kho Netflix Open Content nằm ở S3 với tên bucket có dấu chấm (`download.opencontent.netflix.com`), nên địa chỉ dạng tên miền ảo bị lỗi TLS. Dùng dạng đường dẫn: `https://s3.amazonaws.com/download.opencontent.netflix.com/<thư mục>/<file>`.
+- File lớn có thể bị ngắt giữa chừng (đã gặp lỗi hết thời gian đọc ở bản sao Blender). Dùng trình tải có tiếp tục từ chỗ dừng (`curl -C -`, hoặc `Range` trong Python).
+- Clip ngắn (10 giây) chỉ cho biết tốc độ và khả năng chạy được. Muốn đo bitrate bậc rendition và VMAF (B2), dùng phim dài hơn: Big Buck Bunny 1080p hoặc Netflix Open Content ở bảng trên.
+- B6 cần nguồn từ 50 fps trở lên: dùng Meridian (4K 59,94 fps) hoặc `Test Jellyfin 1080p AVC 5M.mp4` (1080p 60 fps); xem `bench/frame_interp/README.md`.
 
 Mẫu HLG, track Atmos (E-AC-3 JOC, TrueHD) hiện chưa có nguồn mở phù hợp: dùng file của riêng bạn, chỉ báo kết luận và ảnh so sánh, không gửi file.
