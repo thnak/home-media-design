@@ -1,0 +1,40 @@
+#version 450
+// Buoc 2: dung khung giua. Vector noi suy song tuyen giua tam cac khoi ke can de tranh viền khoi;
+// neu bu chuyen dong cho sai so lon hon tron thang thi dung tron (che khuat, vector sai).
+layout(local_size_x = 16, local_size_y = 16) in;
+layout(std430, binding = 0) readonly buffer F0 { uint f0[]; };
+layout(std430, binding = 1) readonly buffer F1 { uint f1[]; };
+layout(std430, binding = 2) readonly buffer MV { ivec2 mv[]; };
+layout(std430, binding = 3) writeonly buffer OUT { uint outp[]; };
+layout(push_constant) uniform PC { int w; int h; int bw; int bh; float margin; } pc;
+
+vec3 px(bool second, ivec2 q) {
+    q = clamp(q, ivec2(0), ivec2(pc.w - 1, pc.h - 1));
+    uint v = second ? f1[q.y * pc.w + q.x] : f0[q.y * pc.w + q.x];
+    return vec3(float(v & 255u), float((v >> 8) & 255u), float((v >> 16) & 255u));
+}
+vec3 bil(bool second, vec2 p) {
+    vec2 f = fract(p); ivec2 i = ivec2(floor(p));
+    return mix(mix(px(second, i), px(second, i + ivec2(1, 0)), f.x),
+               mix(px(second, i + ivec2(0, 1)), px(second, i + ivec2(1, 1)), f.x), f.y);
+}
+float lum(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
+
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (p.x >= pc.w || p.y >= pc.h) return;
+    vec2 g = (vec2(p) + 0.5) / 16.0 - 0.5;
+    ivec2 b0 = ivec2(floor(g)); vec2 f = g - vec2(b0);
+    ivec2 lim = ivec2(pc.bw - 1, pc.bh - 1);
+    vec2 v00 = vec2(mv[clamp(b0, ivec2(0), lim).y * pc.bw + clamp(b0, ivec2(0), lim).x]);
+    vec2 v10 = vec2(mv[clamp(b0 + ivec2(1, 0), ivec2(0), lim).y * pc.bw + clamp(b0 + ivec2(1, 0), ivec2(0), lim).x]);
+    vec2 v01 = vec2(mv[clamp(b0 + ivec2(0, 1), ivec2(0), lim).y * pc.bw + clamp(b0 + ivec2(0, 1), ivec2(0), lim).x]);
+    vec2 v11 = vec2(mv[clamp(b0 + ivec2(1, 1), ivec2(0), lim).y * pc.bw + clamp(b0 + ivec2(1, 1), ivec2(0), lim).x]);
+    vec2 d = mix(mix(v00, v10, f.x), mix(v01, v11, f.x), f.y);
+    vec3 a = bil(false, vec2(p) - d), b = bil(true, vec2(p) + d);
+    vec3 a0 = px(false, p), b0c = px(true, p);
+    float errWarp = abs(lum(a) - lum(b)), errBlend = abs(lum(a0) - lum(b0c));
+    vec3 o = errWarp > errBlend + pc.margin ? 0.5 * (a0 + b0c) : 0.5 * (a + b);
+    o = clamp(o + 0.5, 0.0, 255.0);
+    outp[p.y * pc.w + p.x] = uint(o.r) | (uint(o.g) << 8) | (uint(o.b) << 16) | 0xFF000000u;
+}

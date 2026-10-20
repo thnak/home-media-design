@@ -1,0 +1,49 @@
+#version 450
+// Buoc 1: uoc luong chuyen dong theo khoi 16x16. Moi workgroup lo mot khoi.
+// Ung vien d la nua vector chuyen dong: so sanh f0(p - d) voi f1(p + d), nen vector gan vao khung giua.
+layout(local_size_x = 64) in;
+layout(std430, binding = 0) readonly buffer F0 { uint f0[]; };
+layout(std430, binding = 1) readonly buffer F1 { uint f1[]; };
+layout(std430, binding = 2) writeonly buffer MV { ivec2 mv[]; };
+layout(push_constant) uniform PC { int w; int h; int range; int bw; float lambda; } pc;
+
+float luma(uint p) { return 0.299 * float(p & 255u) + 0.587 * float((p >> 8) & 255u) + 0.114 * float((p >> 16) & 255u); }
+float fetch(bool second, ivec2 q) {
+    q = clamp(q, ivec2(0), ivec2(pc.w - 1, pc.h - 1));
+    uint v = second ? f1[q.y * pc.w + q.x] : f0[q.y * pc.w + q.x];
+    return luma(v);
+}
+shared float bestSad[64];
+shared int bestIdx[64];
+
+void main() {
+    ivec2 blk = ivec2(gl_WorkGroupID.xy);
+    ivec2 org = blk * 16;
+    int side = 2 * pc.range + 1;
+    int total = side * side;
+    float best = 1e30; int bi = 0;
+    for (int c = int(gl_LocalInvocationID.x); c < total; c += 64) {
+        ivec2 d = ivec2(c % side - pc.range, c / side - pc.range);
+        float sad = 0.0;
+        for (int y = 0; y < 16; ++y)
+            for (int x = 0; x < 16; ++x) {
+                ivec2 p = org + ivec2(x, y);
+                sad += abs(fetch(false, p - d) - fetch(true, p + d));
+            }
+        sad += pc.lambda * float(abs(d.x) + abs(d.y));
+        if (sad < best || (sad == best && c < bi)) { best = sad; bi = c; }
+    }
+    uint t = gl_LocalInvocationID.x;
+    bestSad[t] = best; bestIdx[t] = bi;
+    barrier();
+    for (uint s = 32; s > 0; s >>= 1) {
+        if (t < s && (bestSad[t + s] < bestSad[t] || (bestSad[t + s] == bestSad[t] && bestIdx[t + s] < bestIdx[t]))) {
+            bestSad[t] = bestSad[t + s]; bestIdx[t] = bestIdx[t + s];
+        }
+        barrier();
+    }
+    if (t == 0) {
+        int c = bestIdx[0];
+        mv[blk.y * pc.bw + blk.x] = ivec2(c % side - pc.range, c / side - pc.range);
+    }
+}

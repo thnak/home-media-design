@@ -123,4 +123,4 @@ Quy tắc dùng:
 - Clip ngắn (10 giây) chỉ cho biết tốc độ và khả năng chạy được. Muốn đo bitrate bậc rendition và VMAF (B2), dùng phim dài hơn: Big Buck Bunny 1080p hoặc Netflix Open Content ở bảng trên.
 - B6 cần nguồn từ 50 fps trở lên: dùng Meridian (4K 59,94 fps) hoặc `Test Jellyfin 1080p AVC 5M.mp4` (1080p 60 fps); xem `bench/frame_interp/README.md`.
 
-Mẫu HLG, track Atmos (E-AC-3 JOC, TrueHD) hiện chưa có nguồn mở phù hợp: dùng file của riêng bạn, chỉ báo kết luận và ảnh so sánh, không gửi file.
+Mẫu HLG, track Atmos (E-AC-3 JOC, TrueHD) hiện chưa có nguồn mở phù hợp: dùng file của riêng bạn, chỉ báo kết luận và ảnh so sánh, không gửi file. Đã tìm lại: không có clip E-AC-3 JOC nào có giấy phép mở xác nhận được. Mẫu phát Atmos trên trang nhà phát triển của Dolby chưa rõ điều khoản phân phối lại, và file `Meridian_..._ADM` của Netflix là WAV ADM, không phải JOC. Không có bộ mã hóa JOC mở để tự tạo mẫu. Nếu tìm được nguồn có giấy phép rõ, thêm vào bảng trên.
