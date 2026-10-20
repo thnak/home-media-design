@@ -1150,6 +1150,13 @@ Quy tắc:
 
 B6 (`bench/frame_interp/`) đo từng bậc và từng backend: tốc độ, VMAF so với bản gốc 60 fps, ở 1080p và 4K, và cho TensorRT với ONNX Runtime (CUDA, DirectML) so với ncnn trên cùng mô hình. Kết quả chốt bậc và backend nào vào bản đầu, ngưỡng "còn dư sức", độ chính xác (fp16) và miền màu khi trộn HDR.
 
+**Số đo ban đầu (B6, RTX 4060, một máy, vài đoạn ngắn; chỉ để định hướng, chưa phải ngưỡng chốt).**
+
+- **Bậc 3 trên TensorRT fp16** (RIFE v4.6): suy luận thuần 12,9 ms ở 1080p và 53 ms ở 4K, nhanh gấp khoảng 4 lần CUDA fp32 (52 ms và 216 ms) và chỉ kém khoảng 0,3 dB PSNR, không có khung lỗi. Nội suy 24 → 60 fps cần 36 lần suy luận mỗi giây: ở 1080p chiếm khoảng 46% thời gian GPU, sát ngưỡng 50% ở trên; ở 4K chỉ đạt khoảng 19 khung/s nên chưa đủ, cần giảm độ phân giải tính toán hoặc mô hình nhẹ hơn. Dựng engine mất 1 đến 3,5 phút, nên phải dựng nền và dùng bậc thấp hơn trong lúc chờ, đúng như phần "Tối ưu".
+- **Bậc 2 bằng compute shader Vulkan** (nguyên mẫu, tìm toàn phần theo khối): ngang RIFE khi chuyển động nhỏ (PSNR 44,6 so với 44,0 ở 1080p) với 1,7 ms so với 13 ms, nhưng khi chuyển động nhanh chỉ hơn trộn thẳng khoảng 1 dB (29,0 so với 28,0) còn RIFE đạt 34,2. Vậy bậc 2 đủ cho cảnh yên và rẻ, còn chuyển động nhanh là chỗ bậc 3 có giá trị; việc tách hai bậc là hợp lý. Tăng bán kính tìm làm kết quả tệ đi vì khớp sai, nên bậc 2 cần tìm theo tầng (kim tự tháp độ phân giải) và làm mượt vector; ở 4K tìm toàn phần mất khoảng 77 ms, không dùng được.
+- **Phát hiện đổi cảnh là bắt buộc**: ở cửa sổ có đổi cảnh cả hai bậc đều có khung PSNR rất thấp (khoảng 12 đến 15 dB), nên quy tắc quay về lặp khung ở trên phải có từ bản đầu.
+- Nguồn đo Meridian là PQ P3 không gắn thẻ màu, đọc như RGB thường, nên PSNR chỉ so các bậc và backend với nhau. Chưa đo VMAF cho bậc 2 shader và ML trên bộ nhớ GPU, chưa đo DirectML, int8, và đường decode đến present thật của client. Chi tiết và cách chạy lại: `bench/frame_interp/README.md`.
+
 ### 11.4. Metric và chẩn đoán
 
 Admin cần biết vì sao một thiết bị bị giật, vì sao job transcode chậm hay vì sao kết nối từ xa phải qua relay, mà không lộ ai xem phim gì.
