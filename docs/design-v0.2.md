@@ -1040,6 +1040,7 @@ HAL không bọc lại FFmpeg. FFmpeg đã có lớp trừu tượng thiết b�
 | Thiết bị GPU | `hal::GpuDevice` | CUDA ↔ Vulkan dùng chung bộ nhớ (external memory) | | Worker, client |
 | Decode video (client) | `hal::PlaybackDecoder` | D3D11VA chia sẻ texture sang Vulkan, phần mềm | Vulkan Video, MediaCodec | Client |
 | Hiển thị | `hal::Display` | DXGI + swapchain Vulkan | Android Display | Client |
+| Nội suy khung hình | `hal::FrameInterpolator` | Không ML: compute shader Vulkan. ML: TensorRT (tensor core, GPU NVIDIA RTX), ONNX Runtime (CUDA, DirectML), ncnn Vulkan | OpenVINO (Intel), ROCm hoặc MIGraphX (AMD), API riêng của hãng | Client (mục 11.3.3) |
 | Âm thanh | `hal::AudioOut`, `hal::AudioIn` | miniaudio (chia sẻ), WASAPI độc quyền cho passthrough | AAudio | Client |
 | Lưu khóa | `hal::KeyVault` | TPM 2.0 (CNG trên Windows, tpm2-tss trên Linux), phần mềm (chỉ passphrase hoặc DPAPI) | Android Keystore | Worker (niêm phong KEK), client (khóa thiết bị) |
 
@@ -1065,6 +1066,96 @@ Encoder phần mềm phổ biến nhất (x264, x265) là GPL nên không dùng 
 | AV1 | SVT-AV1 | BSD-3 kèm cấp quyền sáng chế AOM | Đã có trong thiết kế (mục 5.3) |
 
 Bitrate và chất lượng của backend CPU đo bằng B2 như với NVENC.
+
+#### 11.3.3. Nội suy khung hình (client)
+
+Phần lớn phim quay 24 fps. Trên màn hình 60 Hz trở lên, client có thể tạo thêm khung ở giữa để chuyển động mượt hơn. Đây là tính năng **chỉ có ở client, tùy chọn của từng người dùng, mặc định tắt**:
+
+- Server vẫn gửi đúng nhịp khung của nguồn; không tốn thêm băng thông, không đổi variant, không đổi manifest.
+- Nội suy là một bước hiển thị trong pipeline giải mã và hiển thị (mục 6.3), sau decode và xử lý màu, trước present. Phụ đề và giao diện vẽ sau nó ở nhịp của màn hình, nên không bị nội suy làm méo.
+- Đồng hồ phát vẫn là đồng hồ media của nguồn (mục 7.3), nên Watch Party không đổi: mọi thành viên cùng vị trí phim dù mỗi người chọn bậc nội suy khác nhau.
+- Chỉ áp dụng cho nguồn từ 30 fps trở xuống. Nguồn đã từ 48 fps trở lên không nội suy.
+
+**Bậc và backend là hai việc khác nhau.** *Bậc* là loại thuật toán (chất lượng và chi phí); *backend* là chỗ chạy nó (API, phần cứng). Cùng một bậc có thể có nhiều backend, và interface `hal::FrameInterpolator` không gắn với Vulkan: Vulkan chỉ là backend portable cho phần không ML.
+
+| Bậc | Tên | Cách làm | Nhược điểm |
+| --- | --- | --- | --- |
+| 0 | Tắt | Lặp khung, căn nhịp theo tần số quét (24 fps trên 120 Hz không bị rung; trên 60 Hz có kiểu 3:2) | Rung hình trên 60 Hz |
+| 1 | Pha trộn | Trộn hai khung kề nhau theo vị trí thời gian | Bóng mờ ở chuyển động nhanh; gần như không làm mượt hơn |
+| 2 | Bù chuyển động cổ điển | Ước lượng chuyển động theo khối hoặc optical flow không dùng ML, dịch điểm ảnh rồi trộn | Lỗi viền vật thể, lỗi ở chữ và vùng bị che |
+| 3 | ML | Mạng nội suy khung (họ RIFE hoặc tương đương), người dùng chọn mô hình (mục "Mô hình" dưới) | Nặng nhất; chất lượng phụ thuộc mô hình |
+
+Bậc 0 và 1 là mức nền; bậc 2 là đường chính cho máy không có tăng tốc ML; bậc 3 là đường nâng cấp. Bậc không ML luôn có sẵn để việc chạy không phụ thuộc vào một mô hình hoặc một hãng.
+
+**Backend theo bậc.** Lúc chạy, mỗi cặp (bậc, backend) được dò riêng (mục 11.3.1) và xếp theo thứ tự ưu tiên có cấu hình:
+
+| Bậc | Backend | Phần cứng | Ghi chú |
+| --- | --- | --- | --- |
+| 1, 2 | Compute shader Vulkan | Mọi GPU Vulkan, kể cả iGPU | Backend portable, luôn thử |
+| 1, 2 | CUDA hoặc D3D12 compute | Theo hãng | Thêm sau nếu B6 cho thấy chênh lệch đáng kể; dùng chung bộ nhớ với decode qua `hal::GpuDevice` |
+| 2 | Khối optical flow phần cứng (NVIDIA Optical Flow) | RTX | Chỉ thay bước ước lượng chuyển động; dự kiến |
+| 3 | **TensorRT** | GPU NVIDIA RTX (tensor core) | Nhanh nhất trên NVIDIA; cần engine dựng sẵn cho từng GPU và driver (xem "Tối ưu") |
+| 3 | **ONNX Runtime** (provider CUDA, DirectML) | NVIDIA (CUDA), mọi GPU Windows 11 (DirectML) | Một mô hình ONNX chạy được trên nhiều hãng; DirectML là đường ML chung cho AMD và Intel |
+| 3 | ncnn Vulkan | Mọi hãng có Vulkan | Phương án dự phòng không phụ thuộc runtime của hãng |
+| 3 | OpenVINO, ROCm hoặc MIGraphX | Intel, AMD | Dự kiến, khi có nhu cầu |
+
+Quy tắc:
+
+- **Chạy cùng adapter với decode và hiển thị** (mục 11.3.1) để khung không phải chép qua RAM. TensorRT, CUDA và DirectML nhận khung qua bộ nhớ dùng chung với Vulkan và D3D11 (external memory, shared texture); backend nào không chia sẻ được thì bị loại khỏi danh sách dò, không lùi sang chép qua CPU.
+- **Runtime của hãng nạp động** (TensorRT, CUDA, DirectML, ONNX Runtime), không link tĩnh, như NVML ở mục 11.4. Không có thì backend đó không dò được và client dùng backend kế tiếp. Điều khoản phân phối lại của TensorRT và CUDA cần kiểm tra trước khi đóng gói; nếu không phân phối kèm được thì người dùng tự cài và client chỉ dò.
+- **Không backend nào là bắt buộc.** Máy không có tensor core vẫn dùng bậc 2 hoặc bậc 3 qua ONNX Runtime DirectML hoặc ncnn.
+
+**Chọn bậc.**
+
+- **Dò rồi mới dùng** (mục 11.3.1). Lúc khởi động, client chạy từng cặp (bậc, backend, mô hình đang chọn) trên một đoạn mẫu có cùng độ phân giải và dải động với nội dung đang phát, rồi đo thời gian xử lý mỗi khung (p95), cùng với decode và xử lý màu đang chạy. Kết quả vào hồ sơ thiết bị (mục 5.1) và log để người dùng thấy.
+- **Chỉ cho chọn bậc còn dư sức**: p95 thời gian xử lý mỗi khung phải nhỏ hơn một nửa khoảng cách giữa hai lần present, để còn chỗ cho decode, phụ đề và các tiến trình khác. Bậc không đạt không hiện trong giao diện.
+- **Tự hạ bậc** khi rớt khung hoặc GPU nóng, xuống backend hoặc bậc kế tiếp rồi xuống tắt, và báo lý do. Người dùng đặt cố định bậc thì chỉ nhận cảnh báo.
+- **Mặc định tắt**, kể cả khi máy đủ mạnh: nội suy đổi cảm giác điện ảnh và nhiều người không thích. Có thể bật theo từng thư viện hoặc từng phim.
+
+**Chất lượng và rủi ro.**
+
+- **Đổi cảnh**: phát hiện cắt cảnh (khác biệt lớn giữa hai khung, hoặc điểm tin cậy thấp của ước lượng chuyển động) thì lặp khung thay vì nội suy.
+- **Vùng lỗi**: khung có độ tin cậy thấp được trộn hoặc lặp thay vì dịch; bảo thủ tốt hơn bóng ma.
+- **HDR**: bước nội suy giữ nguyên không gian màu và không cắt ngưỡng sáng. Phép trộn làm trong miền tuyến tính hay miền PQ do B6 quyết định.
+- **Độ trễ**: thêm tối đa một khung nguồn; client bù vào đồng bộ A/V (mục 6.4, đồng hồ âm thanh là chuẩn).
+- **Pin và nhiệt**: bậc cao tốn nhiều điện; trên laptop dùng pin, mặc định ngưỡng "còn dư sức" chặt hơn.
+- **Giấy phép**: kiểm tra giấy phép của cả mã và trọng số mô hình ML trước khi đóng gói; không đưa mô hình có giấy phép hạn chế vào bản phát hành.
+
+**Mô hình (bậc 3).** Người dùng chọn mô hình nội suy trong cài đặt; client không gắn với một mô hình. Để đổi mô hình mà không đổi mã, mọi mô hình phải theo một **hợp đồng vào ra cố định** và được kiểm tra khi nạp:
+
+- **Gói mô hình** (`model.json` kèm một hoặc nhiều *artifact*): hợp đồng vào ra và các thuộc tính chung nằm trong `model.json`, không phụ thuộc định dạng file. Gồm tên, phiên bản, giấy phép, miền màu mô hình được huấn luyện (ví dụ `bt709-gamma-sdr`, `pq-hdr`), độ căn kích thước (ví dụ bội số của 32), danh sách độ phân giải tính toán hỗ trợ (xem dưới), và gợi ý tối ưu.
+- **Artifact**: mỗi artifact là một file mô hình ở một định dạng cụ thể, khai báo `format` (ví dụ ONNX, engine TensorRT, ncnn param/bin, hoặc định dạng khác khi có backend mới), `precision` (fp32, fp16, int8 đã lượng tử hóa), backend dùng được, SHA-256, và với artifact đã biên dịch cho phần cứng (engine TensorRT) thêm *khóa tương thích*: kiến trúc GPU (ví dụ `sm_89`), phiên bản TensorRT, phiên bản driver tối thiểu. Một mô hình thường có một artifact portable (ví dụ ONNX fp16) và vài artifact tối ưu cho từng backend. Client chọn artifact nhanh nhất mà backend đang dò được dùng và khóa tương thích khớp; nếu chỉ có artifact portable thì dựng lại cục bộ (mục "Tối ưu").
+- **Định dạng không phải điểm cố định, hợp đồng vào ra mới là.** Lượng tử hóa, biên dịch hay đổi định dạng được tự do *bên trong* artifact; **biên của mô hình giữ nguyên**: cùng tên tensor logic, cùng bố cục, cùng kiểu float ở đầu vào và đầu ra. Lượng tử hóa int8 phải nằm trong mô hình (lượng tử hóa và khử lượng tử hóa ở trong), không để lộ ra biên. Nhờ vậy pipeline phía trước và phía sau không đổi dù thay artifact hay thay backend.
+- **Đầu vào**: `frame0` và `frame1`, tensor `[1, 3, H, W]`, RGB, float16 hoặc float32, giá trị trong `[0, 1]`, H và W động theo độ căn đã khai báo; `timestep`, một số thực trong `(0, 1)` là vị trí giữa hai khung. Client tự đổi từ khung giải mã (YUV, HDR) sang miền màu mô hình khai báo và đổi lại sau khi nội suy, nên mô hình không cần biết HDR hay YUV.
+- **Đầu ra**: `frame_t` cùng kiểu và kích thước với đầu vào. Có thể thêm `confidence` `[1, 1, H, W]` (độ tin cậy từng điểm ảnh) để dùng cho phát hiện đổi cảnh và vùng lỗi ở trên; nếu thiếu thì client dùng độ chênh giữa hai khung.
+- **Kiểm tra khi nạp** (từ chối nếu sai, ghi lý do): SHA-256 và chữ ký khớp (xem "Nguồn mô hình"); đọc tên, kiểu, số chiều đầu vào và đầu ra *từ chính artifact* qua backend (không tin `model.json`) và so với hợp đồng; kích thước file và bộ nhớ dự kiến dưới giới hạn. Kiểm tra riêng theo định dạng do backend làm: với ONNX là opset trong danh sách cho phép, không toán tử tùy biến, không thư viện ngoài, không dữ liệu ngoài file; với engine đã biên dịch là khóa tương thích khớp phần cứng và chỉ nạp khi qua điều kiện tin cậy bên dưới.
+- **Kiểm tra từng khung** (rẻ, trên GPU): đầu ra phải đúng kích thước và hữu hạn (không NaN hay Inf); khung lỗi bị thay bằng khung lặp, không hiển thị. Sau một số khung lỗi liên tiếp, mô hình bị tắt, client hạ bậc và báo lý do (như quy tắc tự hạ bậc ở trên). Mỗi lần suy luận có hạn mức thời gian; quá hạn thì bỏ khung đó.
+- **Nguồn mô hình**: mô hình **do server phân phối**, để admin chọn và duyệt mô hình cho cả gia đình và người dùng không phải tự tìm file lạ. Mô hình đi kèm bản phát hành cũng có sẵn. Mô hình là dữ liệu mà một runtime native phân tích và chạy, nên một mô hình độc hại có thể khai thác lỗi của runtime; vì vậy:
+  - Mỗi gói được **ký** bằng khóa nhà xuất bản (khóa của dự án cho gói đi kèm; khóa của admin, ghim vào client lúc ghép thiết bị, cho gói admin thêm). Khóa ký của admin giữ riêng, **không nằm trên máy server chạy hằng ngày**, để server bị chiếm không ký thêm được mô hình. Client chỉ nạp gói có chữ ký của khóa đã tin; server chỉ là nơi lưu và phát, không phải nơi quyết định tin.
+  - Admin thêm mô hình bằng client admin hoặc công cụ ký riêng; người dùng thường chỉ chọn trong danh mục admin đã duyệt, mặc định chỉ gói đi kèm.
+  - **Engine đã biên dịch** (TensorRT) là nhị phân gắn với phần cứng và phiên bản, và việc nạp là một bề mặt tấn công riêng. Chỉ nạp khi engine do chính client dựng, hoặc có chữ ký của khóa đã tin *và* khóa tương thích khớp. Mặc định client dựng lại từ artifact portable thay vì nạp engine dựng sẵn từ nơi khác.
+  - Mô hình do người dùng tự thêm không qua server là **không xác minh**: tắt mặc định, cần bật rõ ràng kèm cảnh báo, vẫn qua mọi kiểm tra trên.
+  - Tải mô hình đi qua kênh Noise như dữ liệu khác, kiểm tra SHA-256 sau khi tải, và có giới hạn kích thước và tốc độ để không làm đầy đĩa client.
+  - Cách ly: chạy suy luận trong tiến trình riêng ít quyền (không mạng, không ghi file) là giảm thiểu mạnh nhất nếu runtime có lỗi; cần quyết định khi làm prototype, vì tốn thêm chép khung giữa hai tiến trình (mục 16).
+- **Giấy phép**: giấy phép trong `model.json` hiện ở giao diện chọn; mô hình đi kèm bản phát hành phải có giấy phép cho phép phân phối lại (xem trên).
+
+**Tối ưu (nằm ở client, không đổi hợp đồng).** Việc làm nhanh làm khi cài hoặc lần đầu dùng, từ artifact portable hoặc từ artifact đã tối ưu có sẵn, và không được đổi kết quả quá ngưỡng:
+
+- **Dựng engine theo máy**: nếu không có engine khớp khóa tương thích, TensorRT dựng engine từ artifact portable cho từng GPU, driver và mô hình, lưu đệm theo (GPU, driver, hash artifact, độ phân giải tính toán). Dựng chạy nền với thanh tiến trình; trong lúc chờ client dùng bậc thấp hơn hoặc backend khác.
+- **Độ phân giải tính toán cố định**: engine đã biên dịch thường chỉ hợp lệ với vài kích thước (profile tối ưu). Gói khai báo danh sách kích thước hỗ trợ (ví dụ 1088×1920 và 2176×3840, đã căn theo độ căn); client đệm khung lên kích thước gần nhất và cắt lại sau khi nội suy, nên hợp đồng `[1, 3, H, W]` vẫn đúng ở mức logic.
+- **Độ chính xác thấp**: fp16 nếu mô hình khai báo hỗ trợ; int8 chỉ khi gói mô hình kèm dữ liệu hiệu chỉnh.
+- **Pipeline**: chạy suy luận trước một khung, dùng CUDA graph hoặc tương đương, một hàng đợi riêng để không chặn present.
+- **Giảm độ phân giải tính toán**: ước lượng chuyển động ở độ phân giải thấp hơn rồi áp lên khung đầy đủ, hoặc chia ô cho 4K; là tùy chọn của gói mô hình, tắt nếu B6 cho thấy mất chất lượng.
+- **Tự kiểm sau khi tối ưu**: engine hoặc cấu hình tối ưu chạy một cặp khung thử cố định đi kèm client và so với kết quả tham chiếu (ONNX chưa tối ưu); sai lệch quá ngưỡng thì bỏ cấu hình đó và dùng bản chưa tối ưu.
+
+B6 (`bench/frame_interp/`) đo từng bậc và từng backend: tốc độ, VMAF so với bản gốc 60 fps, ở 1080p và 4K, và cho TensorRT với ONNX Runtime (CUDA, DirectML) so với ncnn trên cùng mô hình. Kết quả chốt bậc và backend nào vào bản đầu, ngưỡng "còn dư sức", độ chính xác (fp16) và miền màu khi trộn HDR.
+
+**Số đo ban đầu (B6, RTX 4060, một máy, vài đoạn ngắn; chỉ để định hướng, chưa phải ngưỡng chốt).**
+
+- **Bậc 3 trên TensorRT fp16** (RIFE v4.6): suy luận thuần 12,9 ms ở 1080p và 53 ms ở 4K, nhanh gấp khoảng 4 lần CUDA fp32 (52 ms và 216 ms) và chỉ kém khoảng 0,3 dB PSNR, không có khung lỗi. Nội suy 24 → 60 fps cần 36 lần suy luận mỗi giây: ở 1080p chiếm khoảng 46% thời gian GPU, sát ngưỡng 50% ở trên; ở 4K chỉ đạt khoảng 19 khung/s nên chưa đủ, cần giảm độ phân giải tính toán hoặc mô hình nhẹ hơn. Dựng engine mất 1 đến 3,5 phút, nên phải dựng nền và dùng bậc thấp hơn trong lúc chờ, đúng như phần "Tối ưu".
+- **Bậc 2 bằng compute shader Vulkan** (nguyên mẫu, tìm toàn phần theo khối): ngang RIFE khi chuyển động nhỏ (PSNR 44,6 so với 44,0 ở 1080p) với 1,7 ms so với 13 ms, nhưng khi chuyển động nhanh chỉ hơn trộn thẳng khoảng 1 dB (29,0 so với 28,0) còn RIFE đạt 34,2. Vậy bậc 2 đủ cho cảnh yên và rẻ, còn chuyển động nhanh là chỗ bậc 3 có giá trị; việc tách hai bậc là hợp lý. Tăng bán kính tìm làm kết quả tệ đi vì khớp sai, nên bậc 2 cần tìm theo tầng (kim tự tháp độ phân giải) và làm mượt vector; ở 4K tìm toàn phần mất khoảng 77 ms, không dùng được.
+- **Phát hiện đổi cảnh là bắt buộc**: ở cửa sổ có đổi cảnh cả hai bậc đều có khung PSNR rất thấp (khoảng 12 đến 15 dB), nên quy tắc quay về lặp khung ở trên phải có từ bản đầu.
+- Nguồn đo Meridian là PQ P3 không gắn thẻ màu, đọc như RGB thường, nên PSNR chỉ so các bậc và backend với nhau. Chưa đo VMAF cho bậc 2 shader và ML trên bộ nhớ GPU, chưa đo DirectML, int8, và đường decode đến present thật của client. Chi tiết và cách chạy lại: `bench/frame_interp/README.md`.
 
 ### 11.4. Metric và chẩn đoán
 
@@ -1096,7 +1187,7 @@ Admin cần biết vì sao một thiết bị bị giật, vì sao job transcode
 | Lưu trữ | Server | Dung lượng trống, hạn mức đã dùng theo người dùng, độ trễ đọc đơn vị; **số đơn vị xác thực AEAD thất bại** |
 | Key store | Server | Khóa hay mở, số lần mở khóa thất bại, `mlock` và large page có hoạt động không |
 | Phòng | Server | Số phòng, số thành viên, tier, số lần chuyển tier, số lần chặn tham gia, bitrate SFU vào và ra |
-| Phát | Client | Thời gian bắt đầu phát, độ trễ seek, số lần và tổng thời gian buffer, chuyển bậc ABR, khung rớt, lỗi decode, backend decode, lệch A/V |
+| Phát | Client | Thời gian bắt đầu phát, độ trễ seek, số lần và tổng thời gian buffer, chuyển bậc ABR, khung rớt, lỗi decode, backend decode, lệch A/V; bậc, backend và mô hình nội suy khung đang dùng, thời gian xử lý mỗi khung, số khung bị loại vì kiểm tra đầu ra, số lần tự hạ bậc (mục 11.3.3) |
 | Watch Party | Client | Lệch so với host, số lần seek hiệu chỉnh |
 | Voice | Client | Jitter, mất gói, độ trễ đầu cuối, hiệu quả khử vọng (ERLE) |
 | Hệ thống | Cả hai | CPU, RAM, kết quả dò HAL, phiên bản app, driver |
@@ -1202,6 +1293,10 @@ Kênh Noise (mục 9) che nội dung, danh tính thiết bị và loại dịch 
 
 Che hoàn toàn nhịp tải cần traffic giả liên tục, tốn băng thông; đã chốt không làm ở bản đầu (mục 16).
 
+### 13.5. Mô hình nội suy khung hình do server phân phối
+
+Mô hình ML (mục 11.3.3) là dữ liệu mà runtime native của client (ONNX Runtime, TensorRT, ncnn) phân tích và chạy. Rủi ro là server bị chiếm đưa mô hình hoặc engine được tạo ra để khai thác lỗi của runtime. Giảm thiểu: gói mô hình được ký bằng khóa mà server hằng ngày không giữ, client chỉ nạp gói có chữ ký của khóa đã tin, engine biên dịch sẵn chỉ nạp khi do client dựng hoặc có chữ ký, mọi mô hình qua kiểm tra hợp đồng vào ra và kiểm tra từng khung, và tùy chọn chạy suy luận trong tiến trình riêng ít quyền. Ngoài phạm vi: lỗi của chính runtime khi mô hình hợp lệ và đã ký.
+
 ## 14. Kế hoạch triển khai
 
 Ưu tiên giảm rủi ro kỹ thuật lớn nhất trước: định dạng mã hóa, phát cục bộ và transcode theo năng lực, rồi mới tới mạng và tương tác.
@@ -1289,6 +1384,7 @@ Sau bản đầu: **Memorize!**, lưu và phát lại lịch sử xem chung, cha
 - [x] Đã chốt: có transcode trực tiếp, dùng chung pipeline với job dựng sẵn (mục 5.4).
 - [x] Đã chốt: không tự xóa; đề xuất dọn sau 90 ngày không ai cần và không ai phát, admin duyệt; giữ vĩnh viễn original và 720p SDR (mục 5.3).
 - [ ] Đề xuất Dolby Vision profile 5: áp RPU bằng libplacebo để ra HDR10 và SDR (mục 5.5); cần thử màu trên phim mẫu.
+- [ ] Đề xuất nội suy khung hình phía client theo bậc, từ phần mềm không ML đến ML (mục 11.3.3); hợp đồng vào ra cố định cho mô hình ML, độc lập định dạng (ONNX, engine TensorRT, lượng tử hóa), mô hình do server phân phối và ký (mục 11.3.3, 13.5), để người dùng đổi mô hình được; tiến trình riêng cho suy luận có đáng chi phí không; backend không chỉ Vulkan (TensorRT, ONNX Runtime, ncnn); B6 chốt bậc và backend vào bản đầu, ngưỡng "còn dư sức" và miền màu khi trộn HDR.
 
 **Kênh truyền**
 

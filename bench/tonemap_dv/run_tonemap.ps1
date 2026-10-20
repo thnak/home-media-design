@@ -36,6 +36,8 @@ $Methods = [ordered]@{
     }
 }
 
+# FFmpeg ghi loi ra stderr; mot phuong an loi (vd zscale voi DV5) khong duoc dung ca script.
+$ErrorActionPreference = "Continue"
 foreach ($m in $Methods.Keys) {
     foreach ($t in $Times) {
         $png = Join-Path $outDir ("{0}_t{1:D5}.png" -f $m, $t)
@@ -45,13 +47,16 @@ foreach ($m in $Methods.Keys) {
     }
 }
 
+$dur = [double](& ffprobe -v error -show_entries format=duration -of csv=p=0 $Source)
 Write-Host "Toc do tone-map $SpeedSeconds giay phim (ra null):"
 foreach ($m in @("libplacebo", "zscale-hable")) {
     $sw = [Diagnostics.Stopwatch]::StartNew()
-    & $FFmpeg -hide_banner -loglevel error -y @($Methods[$m].Pre) -ss 30 -t $SpeedSeconds -i $Source `
+    & $FFmpeg -hide_banner -loglevel error -y @($Methods[$m].Pre) -i $Source -t $SpeedSeconds `
         -map 0:v:0 -vf $Methods[$m].Vf -f null -
     $sw.Stop()
-    Write-Host ("  {0,-14} {1:N2}x realtime" -f $m, ($SpeedSeconds / $sw.Elapsed.TotalSeconds))
+    if ($LASTEXITCODE -ne 0) { Write-Host ("  {0,-14} loi" -f $m); continue }
+    $played = [math]::Min($SpeedSeconds, $dur)
+    Write-Host ("  {0,-14} {1:N2}x realtime" -f $m, ($played / $sw.Elapsed.TotalSeconds))
 }
 
 Write-Host "Anh so sanh: $outDir"

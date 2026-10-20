@@ -1,1 +1,2 @@
 class_id,vendor,model,os,driver,backend,tests,result,commit,date,evidence,contributor,retest
+gpu-nv-ada,NVIDIA,GeForce RTX 4060,Windows 11 Pro 10.0.26300,617.14,nvenc,B1;B2;B3,pass,9888a84,2026-10-18,,@thnak,yes
